@@ -19,7 +19,7 @@ class Database {
 
     async query(sql, params) {
         try {
-            const [rows, fields] = await this.pool.execute(sql, params);
+            const [rows] = await this.pool.execute(sql, params);
             return rows;
         } catch (error) {
             console.error('Database query error:', error);

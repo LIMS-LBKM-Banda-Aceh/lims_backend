@@ -9,15 +9,15 @@ const { authenticate, authorize } = require('../middleware/authMiddleware');
 router.post('/registrations/:registrationId/tests', authenticate, authorize(['lab']), testController.createTest);
 
 // Get tests for registration
-router.get('/registrations/:registrationId/tests', authenticate, authorize(['lab', 'manajemen', 'input', 'validator']), testController.getTestsForRegistration);
+router.get('/registrations/:registrationId/tests', authenticate, authorize(['lab', 'admin', 'input', 'validator']), testController.getTestsForRegistration);
 
 // Update test
 router.put('/tests/:testId', authenticate, authorize(['lab']), testController.updateTest);
 
 // Validate test
-router.put('/tests/:testId/validate', authenticate, authorize(['validator', 'manajemen']), testController.validateTest);
+router.put('/tests/:testId/validate', authenticate, authorize(['validator', 'admin']), testController.validateTest);
 
 // Delete test
-router.delete('/tests/:testId', authenticate, authorize(['lab', 'manajemen']), testController.deleteTest);
+router.delete('/tests/:testId', authenticate, authorize(['lab', 'admin']), testController.deleteTest);
 
 module.exports = router;
