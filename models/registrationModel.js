@@ -30,6 +30,12 @@ const RegistrationModel = {
         const no_reg = await this.generateNoReg();
         const no_sampel_lab = await this.generateNoSampelLab();
 
+        const formatDate = (dateStr) => {
+            if (!dateStr) return null;
+            const m = moment(dateStr);
+            return m.isValid() ? m.format('YYYY-MM-DD HH:mm:ss') : null;
+        };
+
         const sql = `
             INSERT INTO registrations (
                 no_urut, nama_pasien, tgl_lahir, umur, jenis_kelamin,
@@ -43,7 +49,7 @@ const RegistrationModel = {
         const params = [
             data.no_urut || null,
             data.nama_pasien,
-            data.tgl_lahir || null,
+            formatDate(data.tgl_lahir),
             data.umur || null,
             data.jenis_kelamin || 'L',
             data.nik || null,
@@ -52,8 +58,8 @@ const RegistrationModel = {
             data.asal_sampel || null,
             data.no_sampel_asal || null,
             data.coding || null,
-            data.tgl_terima || null,
-            data.tgl_pengambilan || null,
+            formatDate(data.tgl_terima),
+            formatDate(data.tgl_pengambilan),
             data.ket_pengerjaan || null,
             data.ket_pengiriman || null,
             no_sampel_lab,
