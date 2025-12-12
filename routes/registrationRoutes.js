@@ -12,7 +12,7 @@ router.get('/', authenticate, authorize(['lab', 'admin', 'input', 'validator']),
 router.get('/:id', authenticate, authorize(['lab', 'admin', 'input', 'validator']), controller.getRegistrationById);
 
 // Create new registration
-router.post('/', authenticate, authorize(['input', 'lab']), controller.createRegistration);
+router.post('/', authenticate, authorize(['input', 'lab', 'admin']), controller.createRegistration);
 
 // Update registration
 router.put('/:id', authenticate, authorize(['input', 'lab', 'admin']), controller.updateRegistration);
@@ -25,5 +25,8 @@ router.post('/:id/publish', authenticate, authorize(['validator', 'admin']), con
 
 // Get statistics
 router.get('/stats/summary', authenticate, authorize(['admin']), controller.getRegistrationStats);
+
+// Delete registration
+router.delete('/:id', authenticate, authorize(['admin']), controller.deleteRegistration);
 
 module.exports = router;

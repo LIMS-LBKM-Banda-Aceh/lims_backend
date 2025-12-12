@@ -138,6 +138,31 @@ exports.updateRegistration = async (req, res) => {
     }
 };
 
+exports.deleteRegistration = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const deleted = await RegistrationModel.delete(id);
+
+        if (!deleted) {
+            return res.status(404).json({
+                success: false,
+                message: 'Registration not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Registration deleted successfully'
+        });
+    } catch (err) {
+        console.error('Error deleting registration:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+};
+
 exports.publishResults = async (req, res) => {
     try {
         const { id } = req.params;
