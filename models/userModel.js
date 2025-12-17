@@ -76,6 +76,11 @@ const UserModel = {
         await db.execute(sql, values);
 
         return this.findById(id);
+    },
+    
+    async deleteUser(id) {
+        const result = await db.execute('DELETE FROM users WHERE id = ?', [id]);
+        return result;
     }
 };
 

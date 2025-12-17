@@ -13,5 +13,6 @@ router.post('/login', userController.login);
 router.get('/profile', authenticate, userController.getProfile);
 router.get('/', authenticate, authorize(['admin']), userController.getAllUsers);
 router.put('/:id', authenticate, authorize(['admin']), userController.updateUser);
+router.delete('/:id', authenticate, authorize(['admin']), userController.deleteUser);
 
 module.exports = router;

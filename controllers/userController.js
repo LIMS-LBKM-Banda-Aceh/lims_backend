@@ -159,3 +159,30 @@ exports.updateUser = async (req, res) => {
         });
     }
 };
+
+exports.deleteUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Prevent deleting self (Optional but recommended)
+        if (req.user.id == id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Tidak dapat menghapus akun sendiri saat sedang login'
+            });
+        }
+
+        await UserModel.deleteUser(id);
+
+        res.json({
+            success: true,
+            message: 'User deleted successfully'
+        });
+    } catch (err) {
+        console.error('Error deleting user:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+};
