@@ -165,7 +165,7 @@ exports.deleteRegistration = async (req, res) => {
 
 exports.publishResults = async (req, res) => {
     try {
-        const { id } = req.params;
+        const { id } = req.params; 
 
         // Cek apakah registration ada
         const registration = await RegistrationModel.findById(id);

@@ -9,6 +9,7 @@ const cors = require('cors');
 const userRoutes = require('./routes/userRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
 const testRoutes = require('./routes/testRoutes');
+const masterRoutes = require('./routes/masterRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,6 +25,7 @@ app.use(cors({
 
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+
 
 // Static files - pastikan direktori public ada
 const publicDir = path.join(__dirname, 'public');
@@ -45,7 +47,9 @@ app.use((req, res, next) => {
 // Routes
 app.use('/api/users', userRoutes);
 app.use('/api/registrations', registrationRoutes);
+app.use('/api/master', masterRoutes);
 app.use('/api', testRoutes);
+
 
 // Health check
 app.get('/health', (req, res) => {
@@ -82,7 +86,7 @@ app.all('*', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
-    
+
     // Jika error JWT
     if (err.name === 'JsonWebTokenError') {
         return res.status(401).json({
@@ -90,7 +94,7 @@ app.use((err, req, res, next) => {
             message: 'Invalid token'
         });
     }
-    
+
     // Jika error token expired
     if (err.name === 'TokenExpiredError') {
         return res.status(401).json({
@@ -98,7 +102,7 @@ app.use((err, req, res, next) => {
             message: 'Token expired'
         });
     }
-    
+
     res.status(err.status || 500).json({
         success: false,
         message: err.message || 'Internal server error',
