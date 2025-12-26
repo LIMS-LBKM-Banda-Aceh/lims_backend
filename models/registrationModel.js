@@ -1,6 +1,8 @@
+// models/registrationModel.js
+
 const db = require('../config/dbConfig');
 const moment = require('moment');
-const MasterModel = require('./masterModel'); // Import master model
+const MasterModel = require('./masterModel');
 
 const RegistrationModel = {
     async generateNoReg() {
@@ -50,10 +52,10 @@ const RegistrationModel = {
                 INSERT INTO registrations (
                     nama_pasien, tgl_lahir, umur, jenis_kelamin,
                     nik, alamat, no_kontak, asal_sampel, no_sampel_asal,
-                    coding, tgl_terima, tgl_pengambilan, ket_pengerjaan,
+                    coding, tgl_terima, waktu_sampling, tgl_pengambilan, ket_pengerjaan, 
                     ket_pengiriman, no_sampel_lab, form_pe, petugas_input,
                     kode_ins, jenis_pemeriksaan, total_biaya, no_reg, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const jenis_pemeriksaan_str = selectedItems.map(i => i.nama_pemeriksaan).join(', ');
@@ -70,6 +72,7 @@ const RegistrationModel = {
                 data.no_sampel_asal || null,
                 data.coding || null,
                 formatDate(data.tgl_terima),
+                data.waktu_sampling || null,
                 formatDate(data.tgl_pengambilan),
                 data.ket_pengerjaan || null,
                 data.ket_pengiriman || null,
@@ -141,7 +144,7 @@ const RegistrationModel = {
         const ALLOWED_FIELDS = [
             'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin',
             'nik', 'alamat', 'no_kontak', 'asal_sampel', 'no_sampel_asal',
-            'coding', 'tgl_terima', 'tgl_pengambilan', 'ket_pengerjaan',
+            'coding', 'tgl_terima', 'waktu_sampling', 'tgl_pengambilan', 'ket_pengerjaan',
             'ket_pengiriman', 'no_sampel_lab', 'form_pe', 'petugas_input',
             'kode_ins', 'jenis_pemeriksaan', 'total_biaya', 'status', 'link_hasil'
             // NOTE: 'updated_at' dihapus karena tidak ada di tabel

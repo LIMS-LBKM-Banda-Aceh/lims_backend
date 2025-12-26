@@ -1,4 +1,5 @@
 // models/masterModel.js
+
 const db = require('../config/dbConfig');
 
 const MasterModel = {
@@ -16,7 +17,6 @@ const MasterModel = {
         return await db.query(sql, ids);
     },
 
-    // --- TAMBAHAN BARU ---
     async findById(id) {
         const rows = await db.query('SELECT * FROM master_pemeriksaan WHERE id = ?', [id]);
         return rows[0];
