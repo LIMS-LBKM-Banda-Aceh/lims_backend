@@ -1,4 +1,5 @@
 // controllers/masterController.js
+
 const MasterModel = require('../models/masterModel');
 
 exports.getAllPemeriksaan = async (req, res) => {
@@ -11,17 +12,18 @@ exports.getAllPemeriksaan = async (req, res) => {
     }
 };
 
-// --- TAMBAHAN BARU ---
-
 exports.createPemeriksaan = async (req, res) => {
     try {
-        const { kategori, nama_pemeriksaan, satuan, harga } = req.body;
+        // Ambil field baru: nilai_rujukan, metode
+        const { kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode } = req.body;
 
         if (!nama_pemeriksaan || !harga) {
             return res.status(400).json({ success: false, message: 'Nama dan Harga wajib diisi' });
         }
 
-        const result = await MasterModel.create({ kategori, nama_pemeriksaan, satuan, harga });
+        const result = await MasterModel.create({
+            kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode
+        });
 
         res.status(201).json({
             success: true,
@@ -37,14 +39,16 @@ exports.createPemeriksaan = async (req, res) => {
 exports.updatePemeriksaan = async (req, res) => {
     try {
         const { id } = req.params;
-        const { kategori, nama_pemeriksaan, satuan, harga } = req.body;
+        const { kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode } = req.body;
 
         const exists = await MasterModel.findById(id);
         if (!exists) {
             return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
         }
 
-        const result = await MasterModel.update(id, { kategori, nama_pemeriksaan, satuan, harga });
+        const result = await MasterModel.update(id, {
+            kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode
+        });
 
         res.json({
             success: true,
@@ -66,11 +70,9 @@ exports.deletePemeriksaan = async (req, res) => {
         }
 
         await MasterModel.delete(id);
-
         res.json({ success: true, message: 'Data pemeriksaan berhasil dihapus' });
     } catch (err) {
         console.error('Error deleting pemeriksaan:', err);
-        // Cek error foreign key (jika data sudah dipakai transaksi)
         if (err.code === 'ER_ROW_IS_REFERENCED_2') {
             return res.status(400).json({
                 success: false,

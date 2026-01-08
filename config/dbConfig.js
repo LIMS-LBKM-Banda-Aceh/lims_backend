@@ -63,4 +63,14 @@ class Database {
     }
 }
 
+// Tambahkan method untuk mendapatkan connection pool jika diperlukan oleh modul lain
+Database.prototype.getConnection = async function() {
+    return await this.pool.getConnection();
+};
+
+// Export pool juga untuk kebutuhan khusus
+Database.prototype.getPool = function() {
+    return this.pool;
+};
+
 module.exports = new Database();

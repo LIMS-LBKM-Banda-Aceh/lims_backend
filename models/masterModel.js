@@ -1,5 +1,4 @@
 // models/masterModel.js
-
 const db = require('../config/dbConfig');
 
 const MasterModel = {
@@ -24,14 +23,16 @@ const MasterModel = {
 
     async create(data) {
         const sql = `
-            INSERT INTO master_pemeriksaan (kategori, nama_pemeriksaan, satuan, harga)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO master_pemeriksaan (kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode)
+            VALUES (?, ?, ?, ?, ?, ?)
         `;
         const result = await db.execute(sql, [
             data.kategori,
             data.nama_pemeriksaan,
             data.satuan,
-            data.harga
+            data.harga,
+            data.nilai_rujukan,
+            data.metode
         ]);
         return { id: result.insertId, ...data };
     },
@@ -39,7 +40,7 @@ const MasterModel = {
     async update(id, data) {
         const sql = `
             UPDATE master_pemeriksaan 
-            SET kategori = ?, nama_pemeriksaan = ?, satuan = ?, harga = ?
+            SET kategori = ?, nama_pemeriksaan = ?, satuan = ?, harga = ?, nilai_rujukan = ?, metode = ?
             WHERE id = ?
         `;
         await db.execute(sql, [
@@ -47,14 +48,14 @@ const MasterModel = {
             data.nama_pemeriksaan,
             data.satuan,
             data.harga,
+            data.nilai_rujukan,
+            data.metode,
             id
         ]);
         return { id, ...data };
     },
 
     async delete(id) {
-        // Hati-hati: Idealnya cek dulu apakah sudah dipakai di transaksi registration_details
-        // Namun untuk simpel, kita delete saja (pastikan constraint DB aman/cascade)
         const result = await db.execute('DELETE FROM master_pemeriksaan WHERE id = ?', [id]);
         return result;
     }

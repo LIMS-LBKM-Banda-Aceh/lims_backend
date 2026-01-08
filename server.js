@@ -1,10 +1,9 @@
-// server.js
-
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('node:path');
 const cors = require('cors');
+const fs = require('node:fs'); // SATU DEKLARASI FS SAJA
 
 const userRoutes = require('./routes/userRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
@@ -26,21 +25,26 @@ app.use(cors({
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
-
 // Static files - pastikan direktori public ada
 const publicDir = path.join(__dirname, 'public');
-app.use('/public', express.static(publicDir));
-
-// Buat direktori results jika belum ada
 const resultsDir = path.join(publicDir, 'results');
-const fs = require('node:fs');
+
+// Buat direktori jika belum ada
+if (!fs.existsSync(publicDir)) {
+    fs.mkdirSync(publicDir, { recursive: true });
+}
+
 if (!fs.existsSync(resultsDir)) {
     fs.mkdirSync(resultsDir, { recursive: true });
 }
 
+// Serve static files dengan benar
+app.use('/public', express.static(publicDir));
+app.use('/results', express.static(resultsDir));
+
 // Logging middleware
 app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - IP: ${req.ip}`);
     next();
 });
 
@@ -50,13 +54,13 @@ app.use('/api/registrations', registrationRoutes);
 app.use('/api/master', masterRoutes);
 app.use('/api', testRoutes);
 
-
 // Health check
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
-        service: 'LIMS Backend'
+        service: 'LIMS Backend',
+        uptime: process.uptime()
     });
 });
 
@@ -68,9 +72,35 @@ app.get('/', (req, res) => {
         endpoints: {
             users: '/api/users',
             registrations: '/api/registrations',
-            tests: '/api'
-        }
+            tests: '/api',
+            master: '/api/master',
+            health: '/health'
+        },
+        docs: 'Lihat dokumentasi lengkap di README.md'
     });
+});
+
+// Route untuk download PDF
+app.get('/download/:filename', (req, res) => {
+    const filename = req.params.filename;
+    const filepath = path.join(resultsDir, filename);
+
+    if (fs.existsSync(filepath)) {
+        res.download(filepath, filename, (err) => {
+            if (err) {
+                console.error('Download error:', err);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error downloading file'
+                });
+            }
+        });
+    } else {
+        res.status(404).json({
+            success: false,
+            message: 'File not found'
+        });
+    }
 });
 
 // Handle 404 - menggunakan app.all('*') yang benar
@@ -79,7 +109,8 @@ app.all('*', (req, res) => {
         success: false,
         message: 'Endpoint not found',
         path: req.path,
-        method: req.method
+        method: req.method,
+        availableEndpoints: ['/api/users', '/api/registrations', '/api/master', '/api', '/health']
     });
 });
 
@@ -103,6 +134,14 @@ app.use((err, req, res, next) => {
         });
     }
 
+    // Jika error koneksi database
+    if (err.code === 'ECONNREFUSED') {
+        return res.status(503).json({
+            success: false,
+            message: 'Database connection failed'
+        });
+    }
+
     res.status(err.status || 500).json({
         success: false,
         message: err.message || 'Internal server error',
@@ -116,5 +155,7 @@ app.listen(PORT, () => {
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
     console.log(`📁 Public directory: ${publicDir}`);
+    console.log(`📁 Results directory: ${resultsDir}`);
     console.log(`📊 API Base URL: http://localhost:${PORT}/api`);
+    console.log(`🏥 Health check: http://localhost:${PORT}/health`);
 });

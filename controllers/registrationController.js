@@ -2,7 +2,6 @@
 
 const RegistrationModel = require('../models/registrationModel');
 const TestModel = require('../models/testModel');
-const PDFDocument = require('pdfkit');
 const fs = require('node:fs');
 const path = require('node:path');
 require('dotenv').config();
@@ -16,13 +15,11 @@ exports.getAllRegistrations = async (req, res) => {
     try {
         const { search } = req.query;
         let rows;
-
         if (search) {
             rows = await RegistrationModel.search(search);
         } else {
             rows = await RegistrationModel.getAll();
         }
-
         res.json({
             success: true,
             data: rows,
@@ -67,7 +64,6 @@ exports.createRegistration = async (req, res) => {
         const data = req.body;
         const user = req.user;
 
-        // Tambahkan petugas input dari user yang login
         if (!data.petugas_input) {
             data.petugas_input = user.username;
         }
@@ -85,6 +81,56 @@ exports.createRegistration = async (req, res) => {
             success: false,
             message: 'Server error: ' + err.message
         });
+    }
+};
+
+exports.startSampling = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const registration = await RegistrationModel.findById(id);
+
+        if (!registration) {
+            return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
+        }
+
+        // Update ke proses_sampling
+        await RegistrationModel.setStatus(id, 'proses_sampling');
+
+        res.json({
+            success: true,
+            message: 'Status: Sedang dalam pengambilan sampel'
+        });
+    } catch (err) {
+        console.error('Error starting sampling:', err);
+        res.status(500).json({ success: false, message: 'Gagal update status' });
+    }
+};
+
+exports.sendToLab = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const registration = await RegistrationModel.findById(id);
+
+        if (!registration) {
+            return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
+        }
+
+        // Pastikan urutannya benar
+        if (registration.status !== 'proses_sampling') {
+            // Opsional: Bolehkan skip jika kebijakan membolehkan, tapi idealnya urut.
+            // Disini kita biarkan update saja.
+        }
+
+        // Update ke diterima_lab
+        await RegistrationModel.setStatus(id, 'diterima_lab');
+
+        res.json({
+            success: true,
+            message: 'Sampel berhasil dikirim dan diterima oleh Lab'
+        });
+    } catch (err) {
+        console.error('Error sending to lab:', err);
+        res.status(500).json({ success: false, message: 'Gagal update status' });
     }
 };
 
@@ -163,9 +209,19 @@ exports.deleteRegistration = async (req, res) => {
     }
 };
 
+exports.getLabQueue = async (req, res) => {
+    try {
+        const rows = await RegistrationModel.getLabQueue();
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Error getting lab queue:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
 exports.publishResults = async (req, res) => {
     try {
-        const { id } = req.params; 
+        const { id } = req.params;
 
         // Cek apakah registration ada
         const registration = await RegistrationModel.findById(id);
@@ -185,6 +241,15 @@ exports.publishResults = async (req, res) => {
             });
         }
 
+        // Cek status validation
+        const allTestsCompleted = tests.every(t => t.status === 'completed');
+        if (!allTestsCompleted) {
+            return res.status(400).json({
+                success: false,
+                message: 'Some test results are not completed yet'
+            });
+        }
+
         const validationStats = await TestModel.areAllTestsValidated(id);
         if (validationStats.rejected > 0) {
             return res.status(400).json({
@@ -193,84 +258,24 @@ exports.publishResults = async (req, res) => {
             });
         }
 
+        if (validationStats.approved < validationStats.total) {
+            return res.status(400).json({
+                success: false,
+                message: 'Not all tests have been validated'
+            });
+        }
+
         // Generate PDF
         const filename = `result_${registration.no_sampel_lab}_${Date.now()}.pdf`;
         const filepath = path.join(PUBLIC_RESULTS_DIR, filename);
 
-        const doc = new PDFDocument({ margin: 50 });
-        const stream = fs.createWriteStream(filepath);
-        doc.pipe(stream);
-
-        // Header
-        doc.fontSize(20).font('Helvetica-Bold')
-            .text('HASIL PEMERIKSAAN LABORATORIUM', { align: 'center' });
-        doc.moveDown();
-
-        // Info Pasien
-        doc.fontSize(12).font('Helvetica')
-            .text(`No. Registrasi: ${registration.no_reg || '-'}`);
-        doc.text(`No. Sampel Lab: ${registration.no_sampel_lab || '-'}`);
-        doc.text(`Nama Pasien: ${registration.nama_pasien || '-'}`);
-        doc.text(`Tanggal Lahir: ${registration.tgl_lahir ? new Date(registration.tgl_lahir).toLocaleDateString('id-ID') : '-'}`);
-        doc.text(`Jenis Kelamin: ${registration.jenis_kelamin === 'L' ? 'Laki-laki' : 'Perempuan'}`);
-        doc.text(`Tanggal Terima: ${registration.tgl_terima ? new Date(registration.tgl_terima).toLocaleDateString('id-ID') : '-'}`);
-        doc.moveDown();
-
-        // Tabel Hasil
-        doc.fontSize(14).font('Helvetica-Bold')
-            .text('HASIL PEMERIKSAAN:', { underline: true });
-        doc.moveDown(0.5);
-
-        let y = doc.y;
-        const tableTop = y;
-
-        // Header tabel
-        doc.fontSize(10).font('Helvetica-Bold');
-        doc.text('Parameter', 50, y);
-        doc.text('Hasil', 200, y);
-        doc.text('Satuan', 300, y);
-        doc.text('Nilai Normal', 350, y);
-        doc.text('Status', 450, y);
-
-        y += 20;
-        doc.moveTo(50, y).lineTo(550, y).stroke();
-        y += 10;
-
-        // Isi tabel
-        doc.fontSize(10).font('Helvetica');
-        for (const test of tests) {
-            doc.text(test.parameter_name || '-', 50, y);
-            doc.text(test.nilai || '-', 200, y);
-            doc.text(test.satuan || '-', 300, y);
-            doc.text(test.range_normal || '-', 350, y);
-
-            // Warna status berdasarkan validation
-            if (test.validation_status === 'approved') {
-                doc.fillColor('green').text('✓ Disetujui', 450, y);
-                doc.fillColor('black');
-            } else if (test.validation_status === 'rejected') {
-                doc.fillColor('red').text('✗ Ditolak', 450, y);
-                doc.fillColor('black');
-            } else {
-                doc.text('Menunggu', 450, y);
-            }
-
-            y += 20;
-        }
-
-        // Footer
-        y += 20;
-        doc.fontSize(10)
-            .text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')} ${new Date().toLocaleTimeString('id-ID')}`, 50, y);
-
-        doc.end();
 
         stream.on('finish', async () => {
             const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
             const link = `${baseUrl}/public/results/${filename}`;
 
+            // Gunakan setLinkResult yang sudah ada
             await RegistrationModel.setLinkResult(id, link);
-            await RegistrationModel.setStatus(id, 'selesai');
 
             res.json({
                 success: true,
@@ -299,25 +304,155 @@ exports.publishResults = async (req, res) => {
     }
 };
 
+
 exports.getRegistrationStats = async (req, res) => {
     try {
+        const db = require('../config/dbConfig');
+
+        // PERBAIKI QUERY INI - Sesuaikan dengan field yang ada di database
         const sql = `
             SELECT 
-                status,
-                COUNT(*) as count
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as terdaftar,
+                SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
+                SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as proses_lab,
+                SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as selesai_uji,
+                SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as selesai
             FROM registrations
-            GROUP BY status
+            WHERE DATE(created_at) = CURDATE()
         `;
 
-        const db = require('../config/dbConfig');
-        const stats = await db.query(sql);
+        console.log('Executing stats query:', sql); // Log untuk debug
+
+        const result = await db.query(sql);
+
+        console.log('Stats result:', result); // Log untuk debug
 
         res.json({
             success: true,
-            data: stats
+            data: result.length > 0 ? result[0] : {
+                total: 0,
+                terdaftar: 0,
+                diterima_lab: 0,
+                proses_lab: 0,
+                selesai_uji: 0,
+                selesai: 0
+            }
         });
     } catch (err) {
         console.error('Error getting stats:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error',
+            error: err.message // Tambahkan detail error
+        });
+    }
+};
+
+exports.startProcessing = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await RegistrationModel.setStatus(id, 'proses_lab');
+        res.json({
+            success: true,
+            message: 'Sampel mulai diproses oleh lab'
+        });
+    } catch (err) {
+        console.error('Error starting processing:', err);
+        res.status(500).json({ success: false, message: 'Gagal memproses sampel' });
+    }
+};
+
+// fungsi getRegistrationStats untuk dashboard yang lebih detail
+exports.getRegistrationStats = async (req, res) => {
+    try {
+        const db = require('../config/dbConfig');
+        const sql = `
+            SELECT 
+                COUNT(*) as total,
+                -- Waiting Sampler gabungan Terdaftar + Proses Sampling (agar dashboard ringkas)
+                -- Atau dipisah jika ingin detail
+                SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as waiting_queue,
+                SUM(CASE WHEN status = 'proses_sampling' THEN 1 ELSE 0 END) as in_sampling,
+                SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as waiting_process,
+                SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as in_testing,
+                SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as waiting_validation,
+                SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as completed
+            FROM registrations
+        `;
+
+        const result = await db.query(sql);
+        const data = result[0];
+
+        // Kita gabungkan untuk kemudahan mapping di frontend lama, 
+        // atau kirim raw data biar frontend yang atur.
+        res.json({
+            success: true,
+            data: result.length > 0 ? {
+                ...data,
+                // Helper field: terdaftar dihitung dari queue + sedang sampling
+                terdaftar: Number(data.waiting_queue) + Number(data.in_sampling)
+            } : {}
+        });
+    } catch (err) {
+        console.error('Error getting stats:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.finalizeRegistration = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Cek keberadaan data
+        const registration = await RegistrationModel.findById(id);
+        if (!registration) {
+            return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
+        }
+
+        // Update status langsung ke selesai
+        await RegistrationModel.setStatus(id, 'selesai');
+
+        res.json({
+            success: true,
+            message: 'Registrasi telah diselesaikan dan siap cetak LHU'
+        });
+    } catch (err) {
+        console.error('Error finalizing registration:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.getAllTimeStats = async (req, res) => {
+    try {
+        const db = require('../config/dbConfig');
+
+        const sql = `
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as terdaftar,
+                SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
+                SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as proses_lab,
+                SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as selesai_uji,
+                SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as selesai
+            FROM registrations
+        `;
+
+        const result = await db.query(sql);
+
+        res.json({
+            success: true,
+            data: result.length > 0 ? result[0] : {
+                total: 0,
+                terdaftar: 0,
+                diterima_lab: 0,
+                proses_lab: 0,
+                selesai_uji: 0,
+                selesai: 0
+            }
+        });
+    } catch (err) {
+        console.error('Error getting all time stats:', err);
         res.status(500).json({
             success: false,
             message: 'Server error'
