@@ -8,9 +8,9 @@ const { authenticate, authorize } = require('../middleware/authMiddleware');
 router.get('/lab-queue', authenticate, authorize(['lab', 'admin']), controller.getLabQueue);
 
 // Stats untuk dashboard
-router.get('/stats', authenticate, authorize(['admin', 'manajemen', 'input', 'validator', 'lab']), controller.getRegistrationStats);
+router.get('/stats', authenticate, authorize(['admin', 'manajemen', 'kasir', 'input', 'validator', 'lab']), controller.getRegistrationStats);
 
-router.get('/stats/all-time', authenticate, authorize(['admin', 'manajemen', 'input', 'validator', 'lab', 'kasir']), controller.getAllTimeStats);
+router.get('/stats/all-time', authenticate, authorize(['admin', 'manajemen', 'kasir', 'input', 'validator', 'lab', 'kasir']), controller.getAllTimeStats);
 
 // Manajemen / Input / Admin (Full Data)
 router.get('/', authenticate, authorize(['input', 'kasir', 'manajemen', 'admin', 'validator', 'lab']), controller.getAllRegistrations);

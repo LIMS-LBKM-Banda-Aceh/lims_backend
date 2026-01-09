@@ -38,6 +38,7 @@ exports.authenticate = async (req, res, next) => {
         req.user = {
             id: user.id,
             username: user.username,
+            fullname: user.fullname,
             role: user.role
         };
 

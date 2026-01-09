@@ -183,7 +183,7 @@ const RegistrationModel = {
             'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin',
             'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
             'tgl_terima', 'waktu_sampling', 'tgl_pengambilan', 'ket_pengerjaan',
-            'no_sampel_lab', 'petugas_input',
+            'no_sampel_lab', 'petugas_input', 'no_invoice',
             'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya',
             'status', 'link_hasil', 'status_pembayaran'
         ];
