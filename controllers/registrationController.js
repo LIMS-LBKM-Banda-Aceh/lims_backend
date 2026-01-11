@@ -167,7 +167,28 @@ exports.updateRegistration = async (req, res) => {
     try {
         const { id } = req.params;
         const data = req.body;
+        const user = req.user; // Diambil dari token oleh authMiddleware
 
+        // 1. Ambil data asli dari database sebelum diupdate
+        const existingData = await RegistrationModel.findById(id);
+
+        if (!existingData) {
+            return res.status(404).json({
+                success: false,
+                message: 'Data registrasi tidak ditemukan'
+            });
+        }
+
+        // 2. LOGIKA PROTEKSI EDIT:
+        // Jika role adalah 'input' tapi status saat ini sudah bukan 'terdaftar', TOLAK UPDATE.
+        if (user.role === 'input' && existingData.status !== 'terdaftar') {
+            return res.status(403).json({
+                success: false,
+                message: 'Akses ditolak. Petugas input hanya dapat mengubah data dengan status Terdaftar.'
+            });
+        }
+
+        // 3. Jika lolos validasi, lakukan update
         const registration = await RegistrationModel.update(id, data);
 
         res.json({
@@ -187,14 +208,29 @@ exports.updateRegistration = async (req, res) => {
 exports.deleteRegistration = async (req, res) => {
     try {
         const { id } = req.params;
-        const deleted = await RegistrationModel.delete(id);
+        const user = req.user; // Data dari authMiddleware
 
-        if (!deleted) {
+        // 1. Ambil data registrasi terlebih dahulu untuk cek status
+        const registration = await RegistrationModel.findById(id);
+
+        if (!registration) {
             return res.status(404).json({
                 success: false,
-                message: 'Registration not found'
+                message: 'Data registrasi tidak ditemukan'
             });
         }
+
+        // 2. LOGIKA PROTEKSI:
+        // Jika user adalah 'input' tapi status BUKAN 'terdaftar', maka TOLAK.
+        if (user.role === 'input' && registration.status !== 'terdaftar') {
+            return res.status(403).json({
+                success: false,
+                message: 'Akses ditolak. Petugas input hanya boleh menghapus data yang belum diproses (Status: Terdaftar).'
+            });
+        }
+
+        // 3. Eksekusi hapus (Admin lolos semua, Input lolos jika status 'terdaftar')
+        const deleted = await RegistrationModel.delete(id);
 
         res.json({
             success: true,
@@ -305,49 +341,6 @@ exports.publishResults = async (req, res) => {
 };
 
 
-exports.getRegistrationStats = async (req, res) => {
-    try {
-        const db = require('../config/dbConfig');
-
-        // PERBAIKI QUERY INI - Sesuaikan dengan field yang ada di database
-        const sql = `
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as terdaftar,
-                SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
-                SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as proses_lab,
-                SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as selesai_uji,
-                SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as selesai
-            FROM registrations
-            WHERE DATE(created_at) = CURDATE()
-        `;
-
-        console.log('Executing stats query:', sql); // Log untuk debug
-
-        const result = await db.query(sql);
-
-        console.log('Stats result:', result); // Log untuk debug
-
-        res.json({
-            success: true,
-            data: result.length > 0 ? result[0] : {
-                total: 0,
-                terdaftar: 0,
-                diterima_lab: 0,
-                proses_lab: 0,
-                selesai_uji: 0,
-                selesai: 0
-            }
-        });
-    } catch (err) {
-        console.error('Error getting stats:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Server error',
-            error: err.message // Tambahkan detail error
-        });
-    }
-};
 
 exports.startProcessing = async (req, res) => {
     try {
@@ -368,30 +361,31 @@ exports.getRegistrationStats = async (req, res) => {
     try {
         const db = require('../config/dbConfig');
         const sql = `
-            SELECT 
-                COUNT(*) as total,
-                -- Waiting Sampler gabungan Terdaftar + Proses Sampling (agar dashboard ringkas)
-                -- Atau dipisah jika ingin detail
-                SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as waiting_queue,
-                SUM(CASE WHEN status = 'proses_sampling' THEN 1 ELSE 0 END) as in_sampling,
-                SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as waiting_process,
-                SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as in_testing,
-                SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as waiting_validation,
-                SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as completed
-            FROM registrations
-        `;
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as waiting_queue,
+        SUM(CASE WHEN status = 'proses_sampling' THEN 1 ELSE 0 END) as in_sampling,
+        SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
+        SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as in_testing,
+        SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as waiting_validation,
+        SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as completed
+      FROM registrations
+    `;
 
         const result = await db.query(sql);
         const data = result[0];
 
-        // Kita gabungkan untuk kemudahan mapping di frontend lama, 
-        // atau kirim raw data biar frontend yang atur.
         res.json({
             success: true,
             data: result.length > 0 ? {
                 ...data,
-                // Helper field: terdaftar dihitung dari queue + sedang sampling
-                terdaftar: Number(data.waiting_queue) + Number(data.in_sampling)
+                // PERBAIKAN: Jangan gabungkan, kirim terpisah
+                waiting_queue: Number(data.waiting_queue || 0),
+                in_sampling: Number(data.in_sampling || 0),
+                diterima_lab: Number(data.diterima_lab || 0),
+                in_testing: Number(data.in_testing || 0),
+                waiting_validation: Number(data.waiting_validation || 0),
+                completed: Number(data.completed || 0)
             } : {}
         });
     } catch (err) {

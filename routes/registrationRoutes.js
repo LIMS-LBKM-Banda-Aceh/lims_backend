@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-// Perhatikan baris ini, nama variabelnya adalah 'controller'
 const controller = require('../controllers/registrationController');
 const { authenticate, authorize } = require('../middleware/authMiddleware');
 
@@ -8,16 +7,16 @@ const { authenticate, authorize } = require('../middleware/authMiddleware');
 router.get('/lab-queue', authenticate, authorize(['lab', 'admin']), controller.getLabQueue);
 
 // Stats untuk dashboard
-router.get('/stats', authenticate, authorize(['admin', 'manajemen', 'kasir', 'input', 'validator', 'lab']), controller.getRegistrationStats);
+router.get('/stats', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getRegistrationStats);
 
-router.get('/stats/all-time', authenticate, authorize(['admin', 'manajemen', 'kasir', 'input', 'validator', 'lab', 'kasir']), controller.getAllTimeStats);
+router.get('/stats/all-time', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllTimeStats);
 
 // Manajemen / Input / Admin (Full Data)
-router.get('/', authenticate, authorize(['input', 'kasir', 'manajemen', 'admin', 'validator', 'lab']), controller.getAllRegistrations);
-router.get('/:id', authenticate, authorize(['input', 'kasir', 'manajemen', 'admin', 'validator', 'lab']), controller.getRegistrationById);
+router.get('/', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllRegistrations);
+router.get('/:id', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getRegistrationById);
 router.post('/', authenticate, authorize(['input', 'admin']), controller.createRegistration);
 router.put('/:id', authenticate, authorize(['input', 'admin']), controller.updateRegistration);
-router.delete('/:id', authenticate, authorize(['admin']), controller.deleteRegistration);
+router.delete('/:id', authenticate, authorize(['admin', 'input']), controller.deleteRegistration);
 
 // --- SAMPLER ACTIONS (UPDATED) ---
 

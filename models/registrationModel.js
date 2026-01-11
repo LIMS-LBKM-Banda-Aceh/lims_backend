@@ -80,7 +80,7 @@ const RegistrationModel = {
             INSERT INTO registrations (
                 nama_pasien, tgl_lahir, umur, jenis_kelamin,
                 nik, alamat, no_kontak, asal_sampel, pengirim_instansi, 
-                tgl_terima, waktu_sampling, tgl_pengambilan, no_sampel_lab, form_pe, petugas_input,
+                tgl_daftar, waktu_daftar, tgl_pengambilan, no_sampel_lab, form_pe, petugas_input,
                 kode_ins, jenis_pemeriksaan, total_biaya, no_reg, catatan_tambahan, status, status_pembayaran
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
             `;
@@ -89,7 +89,7 @@ const RegistrationModel = {
                 data.nama_pasien, formatDate(data.tgl_lahir), data.umur || null, data.jenis_kelamin || 'L',
                 data.nik || null, data.alamat || null, data.no_kontak || null,
                 data.asal_sampel || null, data.pengirim_instansi || null,
-                formatDate(data.tgl_terima), data.waktu_sampling || null, formatDate(data.tgl_pengambilan),
+                formatDate(data.tgl_daftar), data.waktu_daftar || null, formatDate(data.tgl_pengambilan),
                 no_sampel_lab, data.form_pe || null, data.petugas_input || null,
                 data.kode_ins || null, jenis_pemeriksaan_str, total_biaya, no_reg,
                 data.catatan_tambahan || null,
@@ -182,7 +182,7 @@ const RegistrationModel = {
         const ALLOWED_FIELDS = [
             'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin',
             'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
-            'tgl_terima', 'waktu_sampling', 'tgl_pengambilan', 'ket_pengerjaan',
+            'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'ket_pengerjaan',
             'no_sampel_lab', 'petugas_input', 'no_invoice',
             'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya',
             'status', 'link_hasil', 'status_pembayaran'
@@ -243,7 +243,7 @@ const RegistrationModel = {
             // B. Logic Update Data Diri & Status
             const updates = [];
             const values = [];
-            const dateFields = ['tgl_lahir', 'tgl_terima', 'tgl_pengambilan'];
+            const dateFields = ['tgl_lahir', 'tgl_daftar', 'tgl_pengambilan'];
 
             for (const [key, value] of Object.entries(fieldData)) {
                 if (ALLOWED_FIELDS.includes(key)) {
@@ -280,8 +280,8 @@ const RegistrationModel = {
     async setStatus(id, status) {
         let sql = 'UPDATE registrations SET status = ?';
         const params = [status];
-        if (status === 'proses_sampling') sql += ', waktu_sampling = CURTIME(), tgl_pengambilan = CURDATE()';
-        else if (status === 'diterima_lab') sql += ', tgl_terima = CURDATE()';
+        if (status === 'proses_sampling') sql += ', waktu_daftar = CURTIME(), tgl_pengambilan = CURDATE()';
+        else if (status === 'diterima_lab') sql += ', tgl_daftar = CURDATE()';
         else if (status === 'proses_lab') sql += ', waktu_mulai_periksa = NOW()';
         else if (status === 'selesai_uji') sql += ', waktu_selesai_periksa = NOW()';
         else if (status === 'selesai') sql += ', updated_at = NOW()';
