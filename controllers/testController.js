@@ -205,3 +205,68 @@ exports.deleteTest = async (req, res) => {
         });
     }
 };
+
+exports.updateTestResult = async (req, res) => {
+    try {
+        const { testId } = req.params;
+        const { nilai } = req.body;
+
+        // 1. Update nilai tes individual
+        await TestModel.updateTest(testId, {
+            nilai,
+            status: 'completed'
+        });
+
+        // 2. Ambil data tes untuk tahu registration_id nya
+        const currentTest = await TestModel.findById(testId);
+        const regId = currentTest.registration_id;
+
+        // 3. Cek apakah SEMUA tes untuk registrasi ini sudah completed
+        const allTests = await TestModel.getTestsByRegistrationId(regId);
+        const isAllFinished = allTests.every(t => t.status === 'completed' && t.nilai !== null);
+
+        if (isAllFinished) {
+            // Update status registrasi ke 'selesai_uji'
+            await RegistrationModel.setStatus(regId, 'selesai_uji');
+        }
+
+        res.json({
+            success: true,
+            message: 'Hasil tes tersimpan',
+            isAllFinished: isAllFinished
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// ... Fungsi getTestsForRegistration (Penting untuk Lab lihat parameter apa yg harus diisi) ...
+exports.getTestsForRegistration = async (req, res) => {
+    try {
+        const { registrationId } = req.params;
+        const user = req.user;
+
+        // Cek authorization untuk melihat tests
+        if (!['lab', 'admin', 'validator', 'manajemen'].includes(user.role)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Unauthorized access to test results'
+            });
+        }
+
+        const tests = await TestModel.getTestsByRegistrationId(registrationId);
+
+        res.json({
+            success: true,
+            data: tests,
+            count: tests.length
+        });
+    } catch (err) {
+        console.error('Error getting tests:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error',
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};

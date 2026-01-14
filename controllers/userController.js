@@ -6,12 +6,12 @@ require('dotenv').config();
 
 exports.register = async (req, res) => {
     try {
-        const { username, password, role } = req.body;
+        const { username, password, fullname, role } = req.body;
 
-        if (!username || !password) {
+        if (!username || !password || !fullname) {
             return res.status(400).json({
                 success: false,
-                message: 'Username dan password diperlukan'
+                message: 'Username, password, dan fullname diperlukan'
             });
         }
 
@@ -24,7 +24,7 @@ exports.register = async (req, res) => {
             });
         }
 
-        const user = await UserModel.createUser({ username, password, role });
+        const user = await UserModel.createUser({ username, password, fullname, role });
 
         res.status(201).json({
             success: true,
@@ -32,6 +32,7 @@ exports.register = async (req, res) => {
             data: {
                 id: user.id,
                 username: user.username,
+                fullname: user.fullname,
                 role: user.role
             }
         });
@@ -75,6 +76,7 @@ exports.login = async (req, res) => {
             {
                 id: user.id,
                 username: user.username,
+                fullname: user.fullname,
                 role: user.role
             },
             process.env.JWT_SECRET || 'your-secret-key',
@@ -89,6 +91,7 @@ exports.login = async (req, res) => {
                 user: {
                     id: user.id,
                     username: user.username,
+                    fullname: user.fullname,
                     role: user.role
                 }
             }
@@ -110,6 +113,7 @@ exports.getProfile = async (req, res) => {
             data: {
                 id: user.id,
                 username: user.username,
+                fullname: user.fullname,
                 role: user.role
             }
         });

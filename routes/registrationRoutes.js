@@ -1,32 +1,43 @@
-// routes/registrationRoutes.js
-
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/registrationController');
 const { authenticate, authorize } = require('../middleware/authMiddleware');
 
-// Get all registrations (with search)
-router.get('/', authenticate, authorize(['lab', 'admin', 'input', 'validator']), controller.getAllRegistrations);
+// KHUSUS LAB (Data Anonim)
+router.get('/lab-queue', authenticate, authorize(['lab', 'admin']), controller.getLabQueue);
 
-// Get registration by ID
-router.get('/:id', authenticate, authorize(['lab', 'admin', 'input', 'validator']), controller.getRegistrationById);
+// Stats untuk dashboard
+router.get('/stats', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getRegistrationStats);
 
-// Create new registration
-router.post('/', authenticate, authorize(['input', 'lab', 'admin']), controller.createRegistration);
+router.get('/stats/all-time', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllTimeStats);
 
-// Update registration
-router.put('/:id', authenticate, authorize(['input', 'lab', 'admin']), controller.updateRegistration);
+// Manajemen / Input / Admin (Full Data)
+router.get('/', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllRegistrations);
+router.get('/:id', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getRegistrationById);
+router.post('/', authenticate, authorize(['input', 'admin']), controller.createRegistration);
+router.put('/:id', authenticate, authorize(['input', 'admin']), controller.updateRegistration);
+router.delete('/:id', authenticate, authorize(['admin', 'input']), controller.deleteRegistration);
 
-// Lab receives sample
-router.put('/:id/receive', authenticate, authorize(['lab']), controller.receiveSample);
+// --- SAMPLER ACTIONS (UPDATED) ---
 
-// Publish results
-router.post('/:id/publish', authenticate, authorize(['validator', 'admin']), controller.publishResults);
+// Route lama (bisa dihapus jika sudah tidak dipakai, atau dibiarkan untuk backward compatibility)
+router.put('/:id/receive', authenticate, authorize(['sampler', 'admin']), controller.receiveSample);
 
-// Get statistics
-router.get('/stats/summary', authenticate, authorize(['admin']), controller.getRegistrationStats);
+// Route BARU (Tahap 1: Mulai Sampling)
+// Menggunakan 'controller', bukan 'registrationController'
+router.put('/:id/start-sampling', authenticate, authorize(['sampler', 'admin']), controller.startSampling);
 
-// Delete registration
-router.delete('/:id', authenticate, authorize(['admin']), controller.deleteRegistration);
+// Route BARU (Tahap 2: Kirim ke Lab)
+// Menggunakan 'controller', bukan 'registrationController'
+router.put('/:id/send-to-lab', authenticate, authorize(['sampler', 'admin']), controller.sendToLab);
+
+// --- LAB ACTIONS ---
+router.put('/:id/start-process', authenticate, authorize(['lab', 'admin']), controller.startProcessing);
+
+// --- VALIDATOR ACTIONS ---
+router.put('/:id/finalize', authenticate, authorize(['manajemen', 'admin']), controller.finalizeRegistration);
+
+// Publish Results
+router.put('/:id/publish', authenticate, authorize(['validator', 'admin']), controller.publishResults);
 
 module.exports = router;

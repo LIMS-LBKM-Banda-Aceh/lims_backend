@@ -38,6 +38,7 @@ exports.authenticate = async (req, res, next) => {
         req.user = {
             id: user.id,
             username: user.username,
+            fullname: user.fullname,
             role: user.role
         };
 
@@ -79,13 +80,14 @@ exports.authorize = (allowedRoles = []) => {
             return next();
         }
 
+        // Tambahkan pengecekan untuk semua role yang ada di database
         if (allowedRoles.includes(req.user.role)) {
             return next();
         }
 
         return res.status(403).json({
             success: false,
-            message: 'Akses ditolak. Role tidak diizinkan.'
+            message: `Akses ditolak. Role ${req.user.role} tidak diizinkan.`
         });
     };
 };
