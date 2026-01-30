@@ -59,13 +59,51 @@ exports.getRegistrationById = async (req, res) => {
     }
 };
 
+exports.checkPatientByNik = async (req, res) => {
+    try {
+        const { nik } = req.params;
+
+        // Validasi dasar
+        if (!nik || nik.length < 16) {
+            return res.status(400).json({
+                success: false,
+                message: 'NIK tidak valid'
+            });
+        }
+
+        const patient = await RegistrationModel.findLastPatientByNik(nik);
+
+        if (patient) {
+            return res.json({
+                success: true,
+                found: true,
+                data: patient,
+                message: 'Data pasien lama ditemukan'
+            });
+        } else {
+            return res.json({
+                success: true,
+                found: false,
+                message: 'Data tidak ditemukan (Pasien Baru)'
+            });
+        }
+
+    } catch (err) {
+        console.error('Error checking NIK:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error saat pengecekan NIK'
+        });
+    }
+};
+
 exports.createRegistration = async (req, res) => {
     try {
         const data = req.body;
         const user = req.user;
 
         if (!data.petugas_input) {
-            data.petugas_input = user.username;
+            data.petugas_input = user.fullname;
         }
 
         const result = await RegistrationModel.create(data);
@@ -397,6 +435,7 @@ exports.getRegistrationStats = async (req, res) => {
 exports.finalizeRegistration = async (req, res) => {
     try {
         const { id } = req.params;
+        const user = req.user;
 
         // Cek keberadaan data
         const registration = await RegistrationModel.findById(id);
@@ -404,12 +443,23 @@ exports.finalizeRegistration = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
         }
 
-        // Update status langsung ke selesai
-        await RegistrationModel.setStatus(id, 'selesai');
+        // VERIFIKASI: Pastikan user yang melakukan ACC adalah validator (role validator atau admin)
+        if (!['validator', 'admin'].includes(user.role)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Hanya validator atau admin yang dapat melakukan ACC'
+            });
+        }
+
+        const validatorName = user.fullname;
+        await RegistrationModel.setStatusAndValidator(id, 'selesai', validatorName);
 
         res.json({
             success: true,
-            message: 'Registrasi telah diselesaikan dan siap cetak LHU'
+            message: 'Registrasi telah diselesaikan dan siap cetak LHU',
+            data: {
+                validator: validatorName
+            }
         });
     } catch (err) {
         console.error('Error finalizing registration:', err);
