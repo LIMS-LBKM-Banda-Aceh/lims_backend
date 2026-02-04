@@ -14,12 +14,24 @@ if (!fs.existsSync(PUBLIC_RESULTS_DIR)) {
 exports.getAllRegistrations = async (req, res) => {
     try {
         const { search } = req.query;
+        const user = req.user; 
+
+        if (user.role === 'lab') {
+            return res.json({
+                success: true,
+                data: [],
+                count: 0,
+                message: 'Akses daftar global dibatasi untuk Lab (Gunakan antrian lab)'
+            });
+        }
+
         let rows;
         if (search) {
             rows = await RegistrationModel.search(search);
         } else {
             rows = await RegistrationModel.getAll();
         }
+
         res.json({
             success: true,
             data: rows,

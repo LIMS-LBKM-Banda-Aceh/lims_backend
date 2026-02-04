@@ -1,9 +1,11 @@
+// server.js
+
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('node:path');
 const cors = require('cors');
-const fs = require('node:fs'); // SATU DEKLARASI FS SAJA
+const fs = require('node:fs');
 
 const userRoutes = require('./routes/userRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
