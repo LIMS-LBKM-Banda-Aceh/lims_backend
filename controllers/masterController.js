@@ -109,7 +109,7 @@ exports.createPemeriksaanWithParameters = async (req, res) => {
 
             // Validasi setiap parameter
             for (const param of parameters) {
-                if (!param.parameter_name || !param.parameter_name.trim()) {
+                if (!param.parameter_name?.trim()) {
                     return res.status(400).json({
                         success: false,
                         message: 'Setiap parameter harus memiliki nama'

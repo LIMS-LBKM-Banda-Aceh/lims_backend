@@ -13,9 +13,10 @@ router.get('/stats/all-time', authenticate, authorize(['admin', 'input', 'sample
 
 // Manajemen / Input / Admin (Full Data)
 router.get('/', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllRegistrations);
+router.get('/check-nik/:nik', authenticate, authorize(['input', 'admin', 'manajemen']), controller.checkPatientByNik);
 router.get('/:id', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getRegistrationById);
 router.post('/', authenticate, authorize(['input', 'admin']), controller.createRegistration);
-router.put('/:id', authenticate, authorize(['input', 'admin']), controller.updateRegistration);
+router.put('/:id', authenticate, authorize(['input', 'admin', 'manajemen']), controller.updateRegistration);
 router.delete('/:id', authenticate, authorize(['admin', 'input']), controller.deleteRegistration);
 
 // --- SAMPLER ACTIONS (UPDATED) ---
@@ -35,9 +36,9 @@ router.put('/:id/send-to-lab', authenticate, authorize(['sampler', 'admin']), co
 router.put('/:id/start-process', authenticate, authorize(['lab', 'admin']), controller.startProcessing);
 
 // --- VALIDATOR ACTIONS ---
-router.put('/:id/finalize', authenticate, authorize(['manajemen', 'admin']), controller.finalizeRegistration);
+router.put('/:id/finalize', authenticate, authorize(['validator', 'admin']), controller.finalizeRegistration);
 
 // Publish Results
-router.put('/:id/publish', authenticate, authorize(['validator', 'admin']), controller.publishResults);
+router.put('/:id/publish', authenticate, authorize(['manajemen', 'admin']), controller.publishResults);
 
 module.exports = router;
