@@ -14,7 +14,7 @@ if (!fs.existsSync(PUBLIC_RESULTS_DIR)) {
 exports.getAllRegistrations = async (req, res) => {
     try {
         const { search } = req.query;
-        const user = req.user; 
+        const user = req.user;
 
         if (user.role === 'lab') {
             return res.json({
@@ -106,6 +106,26 @@ exports.checkPatientByNik = async (req, res) => {
             success: false,
             message: 'Server error saat pengecekan NIK'
         });
+    }
+};
+
+exports.checkSampleNo = async (req, res) => {
+    try {
+        const { no_sampel } = req.params;
+        const { excludeId } = req.query;
+        if (!no_sampel) {
+            return res.status(400).json({ success: false, message: "Nomor sampel kosong" });
+        }
+        const cleanNo = no_sampel.trim().toUpperCase();
+        const available = await RegistrationModel.checkSampleAvailability(cleanNo, excludeId);
+        res.json({
+            success: true,
+            available: available,
+            message: available ? "Tersedia" : "Sudah digunakan"
+        });
+    } catch (err) {
+        console.error("Check sample error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 

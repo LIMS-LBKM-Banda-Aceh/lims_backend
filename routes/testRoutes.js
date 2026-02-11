@@ -7,10 +7,10 @@ const { authenticate, authorize } = require('../middleware/authMiddleware');
 router.get('/registrations/:registrationId/tests', authenticate, authorize(['lab', 'admin', 'validator', 'manajemen']), testController.getTestsForRegistration);
 
 // Update test result - Lab bisa update nilai
-router.put('/tests/:testId', authenticate, authorize(['lab', 'admin']), testController.updateTest);
+router.put('/tests/:testId', authenticate, authorize(['validator', 'lab', 'admin']), testController.updateTest);
 
 // Update test result (alias untuk frontend)
-router.put('/tests/:testId/result', authenticate, authorize(['lab', 'admin']), testController.updateTestResult);
+router.put('/tests/:testId/result', authenticate, authorize(['validator', 'lab', 'admin']), testController.updateTestResult);
 
 // Validate test - Validator dan admin
 router.put('/tests/:testId/validate', authenticate, authorize(['validator', 'admin']), testController.validateTest);

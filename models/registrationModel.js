@@ -33,6 +33,50 @@ const RegistrationModel = {
         return registration;
     },
 
+    async checkSampleAvailability(no_sampel, excludeId = null) {
+        let sql = 'SELECT COUNT(*) as cnt FROM registrations WHERE no_sampel_lab = ?';
+        const params = [no_sampel];
+
+        if (excludeId) {
+            sql += ' AND id != ?';
+            params.push(excludeId);
+        }
+
+        try {
+            const result = await db.query(sql, params);
+
+            // Debug logging (opsional)
+            console.log('CheckSampleAvailability result:', result);
+
+            // Handle different result structures
+            let count = 0;
+
+            if (Array.isArray(result)) {
+                // Jika result adalah array [rows, fields]
+                if (result.length > 0 && Array.isArray(result[0])) {
+                    // Format: [rows, fields]
+                    const rows = result[0];
+                    count = rows.length > 0 ? rows[0].cnt : 0;
+                } else if (result.length > 0 && result[0].cnt !== undefined) {
+                    // Format: rows langsung
+                    count = result[0].cnt;
+                } else if (result.length > 0) {
+                    // Format: rows array langsung
+                    count = result[0]?.cnt || 0;
+                }
+            } else if (result?.cnt !== undefined) {
+                // Format: object langsung
+                count = result.cnt;
+            }
+
+            return count === 0;
+        } catch (error) {
+            console.error('Error in checkSampleAvailability:', error);
+            // Untuk safety, return true jika error (asumsi tersedia)
+            return true;
+        }
+    },
+
     async getLabQueue() {
         const sql = `
             SELECT * FROM registrations 
@@ -62,30 +106,20 @@ const RegistrationModel = {
     // --- Logic Create Data ---
     async create(data) {
         const { items } = data;
-        const no_reg = await this.generateNoReg();
-        if (!data.no_sampel_lab || data.no_sampel_lab.trim() === "") {
-            throw new Error("Nomor Sampel Lab wajib diisi secara manual!");
-        }
-
-        // 1. Validasi Input Manual
+        // 1. Sanitasi Input (Force Uppercase & Trim)
         if (!data.no_sampel_lab || data.no_sampel_lab.trim() === "") {
             throw new Error("Nomor Sampel Lab wajib diisi!");
         }
-
         const no_sampel_lab = data.no_sampel_lab.trim().toUpperCase();
 
-        // 2. CEK DUPLIKASI
-        const result = await db.query(
-            'SELECT id FROM registrations WHERE no_sampel_lab = ?',
-            [no_sampel_lab]
-        );
-
-        const rows = result[0] || result;
-
-        if (rows && rows.length > 0) {
-            throw new Error(`Nomor Sampel "${no_sampel_lab}" sudah ada di database, Gunakan nomor lain`);
+        // 2. Cek Manual (Layer 1 - UX Friendly)
+        const isAvailable = await this.checkSampleAvailability(no_sampel_lab);
+        if (!isAvailable) {
+            throw new Error(`Nomor Sampel "${no_sampel_lab}" sudah digunakan. Mohon refresh atau gunakan nomor lain.`);
         }
 
+        const no_reg = await this.generateNoReg();
+        
         const formatDate = (dateStr) => {
             if (!dateStr) return null;
             const m = moment(dateStr);
@@ -237,148 +271,166 @@ const RegistrationModel = {
             'status', 'link_hasil', 'status_pembayaran'
         ];
 
-        return await db.transaction(async (connection) => {
-            // A. Logic Update Pemeriksaan
-            let itemsToProcess = items;
-            if (!itemsToProcess && pemeriksaan_ids) {
-                itemsToProcess = pemeriksaan_ids.map(id => ({ id, qty: 1 }));
+        if (data.no_sampel_lab) {
+            const no_sampel_clean = data.no_sampel_lab.trim().toUpperCase();
+            const isAvailable = await this.checkSampleAvailability(no_sampel_clean, id);
+
+            if (!isAvailable) {
+                throw new Error(`Nomor Sampel "${no_sampel_clean}" sudah digunakan oleh pasien lain.`);
             }
+            // Update data object dengan yang clean
+            data.no_sampel_lab = no_sampel_clean;
+        }
 
-            if (itemsToProcess && Array.isArray(itemsToProcess)) {
-                // 1. BACKUP HASIL TES YANG SUDAH ADA (PENTING!)
-                // Ambil semua tes yang sudah ada nilainya/completed untuk registrasi ini
-                const [existingTests] = await connection.query(
-                    'SELECT parameter_name, nilai, status, validation_status, validated_by, validation_note, validated_at FROM registration_tests WHERE registration_id = ?',
-                    [id]
-                );
-
-                // Buat Map untuk pencarian cepat: Key = parameter_name
-                const resultsMap = new Map();
-                existingTests.forEach(test => {
-                    // Kita hanya backup jika ada nilai atau statusnya bukan pending
-                    if (test.nilai !== null || test.status === 'completed') {
-                        resultsMap.set(test.parameter_name, test);
-                    }
-                });
-
-                const uniqueIds = [...new Set(itemsToProcess.map(i => i.id))];
-                const masterData = await MasterModel.getPemeriksaanByIds(uniqueIds);
-
-                let validItems = itemsToProcess.map(reqItem => {
-                    const master = masterData.find(m => m.id == reqItem.id);
-                    if (!master) return null;
-                    return { ...master, qty: reqItem.qty || 1 };
-                }).filter(Boolean);
-
-                // Recalculate Total
-                let calculatedTotal = validItems.reduce((sum, item) => sum + (Number(item.harga) * item.qty), 0);
-                if ((fieldData.status_pembayaran || 'berbayar') === 'gratis') {
-                    calculatedTotal = 0;
+        try {
+            return await db.transaction(async (connection) => {
+                // A. Logic Update Pemeriksaan
+                let itemsToProcess = items;
+                if (!itemsToProcess && pemeriksaan_ids) {
+                    itemsToProcess = pemeriksaan_ids.map(id => ({ id, qty: 1 }));
                 }
 
-                fieldData.total_biaya = calculatedTotal;
-                fieldData.jenis_pemeriksaan = validItems.map(i => `${i.nama_pemeriksaan} (${i.qty})`).join(', ');
+                if (itemsToProcess && Array.isArray(itemsToProcess)) {
+                    // 1. BACKUP HASIL TES YANG SUDAH ADA (PENTING!)
+                    // Ambil semua tes yang sudah ada nilainya/completed untuk registrasi ini
+                    const [existingTests] = await connection.query(
+                        'SELECT parameter_name, nilai, status, validation_status, validated_by, validation_note, validated_at FROM registration_tests WHERE registration_id = ?',
+                        [id]
+                    );
 
-                // 2. HAPUS DATA LAMA (Reset Structure)
-                await connection.execute('DELETE FROM registration_details WHERE registration_id = ?', [id]);
-                await connection.execute('DELETE FROM registration_tests WHERE registration_id = ?', [id]);
+                    // Buat Map untuk pencarian cepat: Key = parameter_name
+                    const resultsMap = new Map();
+                    existingTests.forEach(test => {
+                        // Kita hanya backup jika ada nilai atau statusnya bukan pending
+                        if (test.nilai !== null || test.status === 'completed') {
+                            resultsMap.set(test.parameter_name, test);
+                        }
+                    });
 
-                // 3. INSERT ULANG DENGAN RESTORE HASIL
-                if (validItems.length > 0) {
-                    const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
+                    const uniqueIds = [...new Set(itemsToProcess.map(i => i.id))];
+                    const masterData = await MasterModel.getPemeriksaanByIds(uniqueIds);
 
-                    // Query Insert Test diperbarui untuk menerima nilai & status
-                    const sqlTestInsert = `
+                    let validItems = itemsToProcess.map(reqItem => {
+                        const master = masterData.find(m => m.id == reqItem.id);
+                        if (!master) return null;
+                        return { ...master, qty: reqItem.qty || 1 };
+                    }).filter(Boolean);
+
+                    // Recalculate Total
+                    let calculatedTotal = validItems.reduce((sum, item) => sum + (Number(item.harga) * item.qty), 0);
+                    if ((fieldData.status_pembayaran || 'berbayar') === 'gratis') {
+                        calculatedTotal = 0;
+                    }
+
+                    fieldData.total_biaya = calculatedTotal;
+                    fieldData.jenis_pemeriksaan = validItems.map(i => `${i.nama_pemeriksaan} (${i.qty})`).join(', ');
+
+                    // 2. HAPUS DATA LAMA (Reset Structure)
+                    await connection.execute('DELETE FROM registration_details WHERE registration_id = ?', [id]);
+                    await connection.execute('DELETE FROM registration_tests WHERE registration_id = ?', [id]);
+
+                    // 3. INSERT ULANG DENGAN RESTORE HASIL
+                    if (validItems.length > 0) {
+                        const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
+
+                        // Query Insert Test diperbarui untuk menerima nilai & status
+                        const sqlTestInsert = `
                         INSERT INTO registration_tests 
                         (registration_id, parameter_name, satuan, nilai_rujukan, metode, status, nilai, validation_status, validated_by, validation_note, validated_at) 
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     `;
 
-                    for (const item of validItems) {
-                        // Logic deteksi paket
-                        let testParameters = [];
-                        if (item.tipe === 'paket') {
-                            const [dbParams] = await connection.execute(
-                                `SELECT parameter_name, satuan, nilai_rujukan, metode 
+                        for (const item of validItems) {
+                            // Logic deteksi paket
+                            let testParameters = [];
+                            if (item.tipe === 'paket') {
+                                const [dbParams] = await connection.execute(
+                                    `SELECT parameter_name, satuan, nilai_rujukan, metode 
                                  FROM master_pemeriksaan_parameters 
                                  WHERE master_pemeriksaan_id = ? 
                                  ORDER BY urutan ASC`,
-                                [item.id]
-                            );
-                            if (dbParams.length > 0) testParameters = dbParams;
-                            else testParameters.push({
-                                parameter_name: item.nama_pemeriksaan,
-                                satuan: item.satuan,
-                                nilai_rujukan: item.nilai_rujukan,
-                                metode: item.metode
-                            });
-                        } else {
-                            testParameters.push({
-                                parameter_name: item.nama_pemeriksaan,
-                                satuan: item.satuan,
-                                nilai_rujukan: item.nilai_rujukan,
-                                metode: item.metode
-                            });
-                        }
+                                    [item.id]
+                                );
+                                if (dbParams.length > 0) testParameters = dbParams;
+                                else testParameters.push({
+                                    parameter_name: item.nama_pemeriksaan,
+                                    satuan: item.satuan,
+                                    nilai_rujukan: item.nilai_rujukan,
+                                    metode: item.metode
+                                });
+                            } else {
+                                testParameters.push({
+                                    parameter_name: item.nama_pemeriksaan,
+                                    satuan: item.satuan,
+                                    nilai_rujukan: item.nilai_rujukan,
+                                    metode: item.metode
+                                });
+                            }
 
-                        for (let i = 0; i < item.qty; i++) {
-                            await connection.execute(sqlDetail, [id, item.id, item.harga]);
+                            for (let i = 0; i < item.qty; i++) {
+                                await connection.execute(sqlDetail, [id, item.id, item.harga]);
 
-                            for (const param of testParameters) {
-                                const finalParamName = item.qty > 1
-                                    ? `${param.parameter_name} #${i + 1}`
-                                    : param.parameter_name;
+                                for (const param of testParameters) {
+                                    const finalParamName = item.qty > 1
+                                        ? `${param.parameter_name} #${i + 1}`
+                                        : param.parameter_name;
 
-                                // --- LOGIC RESTORE ---
-                                // Cek apakah nama parameter ini ada di backup
-                                const previousData = resultsMap.get(finalParamName);
+                                    // --- LOGIC RESTORE ---
+                                    // Cek apakah nama parameter ini ada di backup
+                                    const previousData = resultsMap.get(finalParamName);
 
-                                // Jika ada backup, pakai data lama. Jika tidak, pakai default (null/pending)
-                                const valNilai = previousData ? previousData.nilai : null;
-                                const valStatus = previousData ? previousData.status : 'pending';
-                                const valValidStatus = previousData ? previousData.validation_status : 'pending';
-                                const valValidBy = previousData ? previousData.validated_by : null;
-                                const valValidNote = previousData ? previousData.validation_note : null;
-                                const valValidAt = previousData ? previousData.validated_at : null;
+                                    // Jika ada backup, pakai data lama. Jika tidak, pakai default (null/pending)
+                                    const valNilai = previousData ? previousData.nilai : null;
+                                    const valStatus = previousData ? previousData.status : 'pending';
+                                    const valValidStatus = previousData ? previousData.validation_status : 'pending';
+                                    const valValidBy = previousData ? previousData.validated_by : null;
+                                    const valValidNote = previousData ? previousData.validation_note : null;
+                                    const valValidAt = previousData ? previousData.validated_at : null;
 
-                                await connection.execute(sqlTestInsert, [
-                                    id,
-                                    finalParamName,
-                                    param.satuan || null,
-                                    param.nilai_rujukan || null,
-                                    param.metode || null,
-                                    valStatus,          // Status dipulihkan
-                                    valNilai,           // Nilai dipulihkan
-                                    valValidStatus,     // Validasi dipulihkan
-                                    valValidBy,
-                                    valValidNote,
-                                    valValidAt
-                                ]);
+                                    await connection.execute(sqlTestInsert, [
+                                        id,
+                                        finalParamName,
+                                        param.satuan || null,
+                                        param.nilai_rujukan || null,
+                                        param.metode || null,
+                                        valStatus,          // Status dipulihkan
+                                        valNilai,           // Nilai dipulihkan
+                                        valValidStatus,     // Validasi dipulihkan
+                                        valValidBy,
+                                        valValidNote,
+                                        valValidAt
+                                    ]);
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // B. Logic Update Data Diri (Standard)
-            const updates = [];
-            const values = [];
-            const dateFields = ['tgl_lahir', 'tgl_daftar', 'tgl_pengambilan'];
+                // B. Logic Update Data Diri (Standard)
+                const updates = [];
+                const values = [];
+                const dateFields = ['tgl_lahir', 'tgl_daftar', 'tgl_pengambilan'];
 
-            for (const [key, value] of Object.entries(fieldData)) {
-                if (ALLOWED_FIELDS.includes(key)) {
-                    updates.push(`${key} = ?`);
-                    values.push(dateFields.includes(key) && value ? formatDate(value) : value);
+                for (const [key, value] of Object.entries(fieldData)) {
+                    if (ALLOWED_FIELDS.includes(key)) {
+                        updates.push(`${key} = ?`);
+                        values.push(dateFields.includes(key) && value ? formatDate(value) : value);
+                    }
                 }
-            }
 
-            if (updates.length > 0) {
-                values.push(id);
-                await connection.execute(`UPDATE registrations SET ${updates.join(', ')} WHERE id = ?`, values);
-            }
+                if (updates.length > 0) {
+                    values.push(id);
+                    await connection.execute(`UPDATE registrations SET ${updates.join(', ')} WHERE id = ?`, values);
+                }
 
-            return { id, ...data };
-        });
+                return { id, ...data };
+            });
+        } catch (err) {
+            if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+                throw new Error(`Gagal Update: Nomor Sampel sudah ada di sistem.`);
+            }
+            throw err;
+        }
     },
 
     // ... (Fungsi delete, setStatus, dll biarkan tetap sama) ...
