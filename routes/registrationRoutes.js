@@ -11,6 +11,8 @@ router.get('/stats', authenticate, authorize(['admin', 'input', 'sampler', 'kasi
 
 router.get('/stats/all-time', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllTimeStats);
 
+router.get('/check-sample-no/:no_sampel', authenticate, controller.checkSampleNo);
+
 // Manajemen / Input / Admin (Full Data)
 router.get('/', authenticate, authorize(['admin', 'input', 'sampler', 'kasir', 'lab', 'validator', 'manajemen']), controller.getAllRegistrations);
 router.get('/check-nik/:nik', authenticate, authorize(['input', 'admin', 'manajemen']), controller.checkPatientByNik);
