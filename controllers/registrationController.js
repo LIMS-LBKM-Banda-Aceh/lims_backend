@@ -129,6 +129,21 @@ exports.checkSampleNo = async (req, res) => {
     }
 };
 
+exports.getFinanceDashboard = async (req, res) => {
+    try {
+        const { period, startDate, endDate } = req.query;
+        const data = await RegistrationModel.getFinanceStats(period, startDate, endDate);
+
+        res.json({
+            success: true,
+            data: data
+        });
+    } catch (err) {
+        console.error('Error getting finance stats:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
 exports.createRegistration = async (req, res) => {
     try {
         const data = req.body;
@@ -151,6 +166,16 @@ exports.createRegistration = async (req, res) => {
             success: false,
             message: 'Server error: ' + err.message
         });
+    }
+};
+
+exports.getLastInvoice = async (req, res) => {
+    try {
+        const lastInvoice = await RegistrationModel.getLastInvoice();
+        res.json({ success: true, data: lastInvoice });
+    } catch (err) {
+        console.error('Error getting last invoice:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
     }
 };
 
@@ -315,9 +340,24 @@ exports.deleteRegistration = async (req, res) => {
     }
 };
 
+exports.getNextSampleSeq = async (req, res) => {
+    try {
+        const result = await RegistrationModel.getNextSampleSeq();
+        res.json({
+            success: true,
+            next_seq: result.next_seq,
+            last_sample_string: result.last_sample_string
+        });
+    } catch (err) {
+        console.error("Gagal mendapatkan nomor urut:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 exports.getLabQueue = async (req, res) => {
     try {
-        const rows = await RegistrationModel.getLabQueue();
+        const user = req.user; 
+        const rows = await RegistrationModel.getLabQueue(user.role, user.instalasi_id);
         res.json({ success: true, data: rows });
     } catch (err) {
         console.error('Error getting lab queue:', err);
