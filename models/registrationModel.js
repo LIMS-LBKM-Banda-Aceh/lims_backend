@@ -5,7 +5,7 @@ const moment = require('moment');
 const MasterModel = require('./masterModel');
 
 const RegistrationModel = {
-    // ... (Fungsi generateNoReg, generateNoSampelLab, getLabQueue biarkan tetap sama) ...
+
     async generateNoReg() {
         const datePart = moment().format('YYYYMMDD');
         const countQuery = await db.query(
@@ -17,6 +17,48 @@ const RegistrationModel = {
 
     async getAll() {
         return await db.query('SELECT * FROM registrations ORDER BY created_at DESC');
+    },
+
+    // --- FUNGSI Mengambil Nomor Urut Selanjutnya & Data Terakhir (FIXED) ---
+    async getNextSampleSeq() {
+        const year = new Date().getFullYear();
+        // Mengambil nomor urut terbesar di tahun berjalan BESERTA no_sampel_lab nya
+        const sql = `
+            SELECT last_sample_seq as max_seq, no_sampel_lab 
+            FROM registrations 
+            WHERE YEAR(created_at) = ? 
+            ORDER BY last_sample_seq DESC 
+            LIMIT 1
+        `;
+
+        try {
+            // FIX: Hapus kurung siku [] di [rows] karena db.query di setup Anda mereturn array langsung
+            const rows = await db.query(sql, [year]);
+
+            // Cek apakah rows ada dan memiliki panjang > 0
+            if (rows && rows.length > 0) {
+                const lastSeq = rows[0].max_seq || 0;
+                const lastString = rows[0].no_sampel_lab || "Belum ada data di tahun ini";
+
+                return {
+                    next_seq: lastSeq + 1,
+                    last_sample_string: lastString
+                };
+            } else {
+                // Jika tabel benar-benar kosong untuk tahun tersebut
+                return {
+                    next_seq: 1,
+                    last_sample_string: "Belum ada data registrasi"
+                };
+            }
+        } catch (error) {
+            console.error("Database query error in getNextSampleSeq:", error);
+            // Fallback aman jika query gagal
+            return {
+                next_seq: 1,
+                last_sample_string: "Error memuat data terakhir"
+            };
+        }
     },
 
     async findById(id) {
@@ -33,57 +75,93 @@ const RegistrationModel = {
         return registration;
     },
 
-    async checkSampleAvailability(no_sampel, excludeId = null) {
-        let sql = 'SELECT COUNT(*) as cnt FROM registrations WHERE no_sampel_lab = ?';
-        const params = [no_sampel];
+    async checkSampleAvailability(no_sampel_string, excludeId = null) {
+        if (!no_sampel_string) return true;
 
-        if (excludeId) {
-            sql += ' AND id != ?';
-            params.push(excludeId);
-        }
+        const samples = no_sampel_string.split(',').map(s => s.trim()).filter(Boolean);
+        if (samples.length === 0) return true;
 
-        try {
-            const result = await db.query(sql, params);
+        for (const sample of samples) {
+            let sql = `
+                SELECT COUNT(*) as cnt FROM registrations 
+                WHERE (no_sampel_lab = ? 
+                   OR no_sampel_lab LIKE ? 
+                   OR no_sampel_lab LIKE ? 
+                   OR no_sampel_lab LIKE ?)
+            `;
+            const params = [
+                sample,
+                `${sample}, %`,
+                `%, ${sample}, %`,
+                `%, ${sample}`
+            ];
 
-            // Debug logging (opsional)
-            console.log('CheckSampleAvailability result:', result);
-
-            // Handle different result structures
-            let count = 0;
-
-            if (Array.isArray(result)) {
-                // Jika result adalah array [rows, fields]
-                if (result.length > 0 && Array.isArray(result[0])) {
-                    // Format: [rows, fields]
-                    const rows = result[0];
-                    count = rows.length > 0 ? rows[0].cnt : 0;
-                } else if (result.length > 0 && result[0].cnt !== undefined) {
-                    // Format: rows langsung
-                    count = result[0].cnt;
-                } else if (result.length > 0) {
-                    // Format: rows array langsung
-                    count = result[0]?.cnt || 0;
-                }
-            } else if (result?.cnt !== undefined) {
-                // Format: object langsung
-                count = result.cnt;
+            if (excludeId) {
+                sql += ' AND id != ?';
+                params.push(excludeId);
             }
 
-            return count === 0;
+            try {
+                const result = await db.query(sql, params);
+
+                let count = 0;
+                if (Array.isArray(result)) {
+                    if (result.length > 0 && Array.isArray(result[0])) count = result[0][0]?.cnt || 0;
+                    else if (result.length > 0 && result[0].cnt !== undefined) count = result[0].cnt;
+                    else if (result.length > 0) count = result[0]?.cnt || 0;
+                } else if (result?.cnt !== undefined) {
+                    count = result.cnt;
+                }
+
+                if (count > 0) return false;
+            } catch (error) {
+                console.error('Error in checkSampleAvailability:', error);
+                return true;
+            }
+        }
+        return true;
+    },
+
+    async getLastInvoice() {
+        const year = new Date().getFullYear();
+        const sql = `
+        SELECT no_invoice 
+        FROM registrations 
+        WHERE no_invoice IS NOT NULL 
+          AND no_invoice != '' 
+          AND no_invoice LIKE '%/690798/PNBP/%' 
+          AND YEAR(created_at) = ?
+        ORDER BY 
+            CAST(SUBSTRING_INDEX(no_invoice, '/', 1) AS UNSIGNED) DESC,
+            id DESC 
+        LIMIT 1
+    `;
+        try {
+            const rows = await db.query(sql, [year]);
+            return rows.length > 0 ? rows[0].no_invoice : null;
         } catch (error) {
-            console.error('Error in checkSampleAvailability:', error);
-            // Untuk safety, return true jika error (asumsi tersedia)
-            return true;
+            console.error("Error in getLastInvoice:", error);
+            return null;
         }
     },
 
-    async getLabQueue() {
-        const sql = `
-            SELECT * FROM registrations 
-            WHERE status NOT IN ('terdaftar', 'proses_sampling') 
-            ORDER BY created_at ASC
+   async getLabQueue(userRole, instalasiId) {
+        let sql = `
+        SELECT DISTINCT r.* FROM registrations r
+        LEFT JOIN registration_details rd ON r.id = rd.registration_id
+        LEFT JOIN master_pemeriksaan mp ON rd.pemeriksaan_id = mp.id
+        WHERE r.status NOT IN ('terdaftar', 'proses_sampling')
         `;
-        return await db.query(sql);
+
+        const params = [];
+        
+        if (userRole === 'lab') {
+            sql += ` AND mp.instalasi_id = ?`;
+            params.push(instalasiId || 0); 
+        }
+
+        sql += ` ORDER BY r.created_at ASC`;
+        return await db.query(sql, params);
     },
 
     async findLastPatientByNik(nik) {
@@ -103,23 +181,34 @@ const RegistrationModel = {
         return rows.length > 0 ? rows[0] : null;
     },
 
-    // --- Logic Create Data ---
     async create(data) {
         const { items } = data;
-        // 1. Sanitasi Input (Force Uppercase & Trim)
         if (!data.no_sampel_lab || data.no_sampel_lab.trim() === "") {
             throw new Error("Nomor Sampel Lab wajib diisi!");
         }
         const no_sampel_lab = data.no_sampel_lab.trim().toUpperCase();
 
-        // 2. Cek Manual (Layer 1 - UX Friendly)
         const isAvailable = await this.checkSampleAvailability(no_sampel_lab);
         if (!isAvailable) {
             throw new Error(`Nomor Sampel "${no_sampel_lab}" sudah digunakan. Mohon refresh atau gunakan nomor lain.`);
         }
 
+        // AUTO-EXTRACT: Ambil nomor urut paling besar dari string inputan (misal "1 IMB 12 2 2026")
+        let max_seq = 0;
+        const samples = no_sampel_lab.split(',').map(s => s.trim());
+        for (const s of samples) {
+            const parts = s.split(' ');
+            if (parts.length >= 3) {
+                const seqStr = parts[parts.length - 3]; // Posisi ke-3 dari kanan pasti nomor urut
+                const seqNum = parseInt(seqStr, 10);
+                if (!isNaN(seqNum) && seqNum > max_seq) {
+                    max_seq = seqNum;
+                }
+            }
+        }
+
         const no_reg = await this.generateNoReg();
-        
+
         const formatDate = (dateStr) => {
             if (!dateStr) return null;
             const m = moment(dateStr);
@@ -133,7 +222,6 @@ const RegistrationModel = {
         let total_biaya = 0;
         let validItems = [];
 
-        // 1. Validasi & Hitung Biaya
         if (items && items.length > 0) {
             const uniqueIds = [...new Set(items.map(i => i.id))];
             const masterData = await MasterModel.getPemeriksaanByIds(uniqueIds);
@@ -150,19 +238,18 @@ const RegistrationModel = {
         }
 
         return await db.transaction(async (connection) => {
-            // String gabungan nama pemeriksaan
             const jenis_pemeriksaan_str = validItems
                 .map(i => `${i.nama_pemeriksaan} (${i.qty})`)
                 .join(', ');
 
-            // Insert Header Registration
+            // INSERT Ditambahkan kolom 'last_sample_seq'
             const sqlReg = `
             INSERT INTO registrations (
                 nama_pasien, tgl_lahir, umur, jenis_kelamin,
                 nik, alamat, no_kontak, asal_sampel, pengirim_instansi, 
                 tgl_daftar, waktu_daftar, tgl_pengambilan, no_sampel_lab, form_pe, petugas_input,
-                kode_ins, jenis_pemeriksaan, total_biaya, no_reg, catatan_tambahan, status, status_pembayaran
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+                kode_ins, jenis_pemeriksaan, total_biaya, no_reg, catatan_tambahan, status, status_pembayaran, last_sample_seq
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
             `;
 
             const paramsReg = [
@@ -172,16 +259,14 @@ const RegistrationModel = {
                 tgl_daftar_fix, waktu_daftar_fix, formatDate(data.tgl_pengambilan),
                 no_sampel_lab, data.form_pe || null, data.petugas_input || null,
                 data.kode_ins || null, jenis_pemeriksaan_str, total_biaya, no_reg,
-                data.catatan_tambahan || null, 'terdaftar', data.status_pembayaran || 'berbayar'
+                data.catatan_tambahan || null, 'terdaftar', data.status_pembayaran || 'berbayar', max_seq
             ];
 
             const [resultReg] = await connection.execute(sqlReg, paramsReg);
             const registrationId = resultReg.insertId;
 
-            // 2. Insert Detail & Tests (LOGIC FIX DISINI)
             if (validItems.length > 0) {
                 const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
-
                 const sqlTestInit = `
                 INSERT INTO registration_tests 
                 (registration_id, parameter_name, satuan, nilai_rujukan, metode, status) 
@@ -189,12 +274,8 @@ const RegistrationModel = {
                 `;
 
                 for (const item of validItems) {
-                    // Tentukan parameter yang akan diinsert ke tabel hasil
                     let testParameters = [];
-
-                    // FIX: Cek tipe Paket
                     if (item.tipe === 'paket') {
-                        // Ambil rincian parameter dari tabel master_pemeriksaan_parameters
                         const [dbParams] = await connection.execute(
                             `SELECT parameter_name, satuan, nilai_rujukan, metode 
                              FROM master_pemeriksaan_parameters 
@@ -206,7 +287,6 @@ const RegistrationModel = {
                         if (dbParams.length > 0) {
                             testParameters = dbParams;
                         } else {
-                            // Fallback: Jika tipe paket tapi tidak ada parameter, gunakan header (safety)
                             testParameters.push({
                                 parameter_name: item.nama_pemeriksaan,
                                 satuan: item.satuan,
@@ -215,7 +295,6 @@ const RegistrationModel = {
                             });
                         }
                     } else {
-                        // Tipe Tunggal
                         testParameters.push({
                             parameter_name: item.nama_pemeriksaan,
                             satuan: item.satuan,
@@ -224,14 +303,9 @@ const RegistrationModel = {
                         });
                     }
 
-                    // Loop Quantity (jika pasien minta 2x tes yang sama)
                     for (let i = 0; i < item.qty; i++) {
-                        // Insert Detail Biaya (Satu baris per quantity item master)
                         await connection.execute(sqlDetail, [registrationId, item.id, item.harga]);
-
-                        // Insert Tests (Sebanyak jumlah parameter x quantity)
                         for (const param of testParameters) {
-                            // Handle penamaan jika qty > 1
                             const finalParamName = item.qty > 1
                                 ? `${param.parameter_name} #${i + 1}`
                                 : param.parameter_name;
@@ -252,7 +326,6 @@ const RegistrationModel = {
         });
     },
 
-    // --- BAGIAN FIX UTAMA: UPDATE ---
     async update(id, data) {
         const { items, pemeriksaan_ids, ...fieldData } = data;
 
@@ -262,13 +335,14 @@ const RegistrationModel = {
             return m.isValid() ? m.format('YYYY-MM-DD HH:mm:ss') : null;
         };
 
+        // DITAMBAHKAN last_sample_seq KE ALLOWED FIELDS
         const ALLOWED_FIELDS = [
             'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin',
             'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
             'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'ket_pengerjaan',
             'no_sampel_lab', 'petugas_input', 'no_invoice',
             'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya',
-            'status', 'link_hasil', 'status_pembayaran'
+            'status', 'link_hasil', 'status_pembayaran', 'last_sample_seq'
         ];
 
         if (data.no_sampel_lab) {
@@ -278,30 +352,39 @@ const RegistrationModel = {
             if (!isAvailable) {
                 throw new Error(`Nomor Sampel "${no_sampel_clean}" sudah digunakan oleh pasien lain.`);
             }
-            // Update data object dengan yang clean
             data.no_sampel_lab = no_sampel_clean;
+
+            // Extrak jika diupdate
+            let max_seq = 0;
+            const samples = no_sampel_clean.split(',').map(s => s.trim());
+            for (const s of samples) {
+                const parts = s.split(' ');
+                if (parts.length >= 3) {
+                    const seqStr = parts[parts.length - 3];
+                    const seqNum = parseInt(seqStr, 10);
+                    if (!isNaN(seqNum) && seqNum > max_seq) {
+                        max_seq = seqNum;
+                    }
+                }
+            }
+            fieldData.last_sample_seq = max_seq;
         }
 
         try {
             return await db.transaction(async (connection) => {
-                // A. Logic Update Pemeriksaan
                 let itemsToProcess = items;
                 if (!itemsToProcess && pemeriksaan_ids) {
                     itemsToProcess = pemeriksaan_ids.map(id => ({ id, qty: 1 }));
                 }
 
                 if (itemsToProcess && Array.isArray(itemsToProcess)) {
-                    // 1. BACKUP HASIL TES YANG SUDAH ADA (PENTING!)
-                    // Ambil semua tes yang sudah ada nilainya/completed untuk registrasi ini
                     const [existingTests] = await connection.query(
                         'SELECT parameter_name, nilai, status, validation_status, validated_by, validation_note, validated_at FROM registration_tests WHERE registration_id = ?',
                         [id]
                     );
 
-                    // Buat Map untuk pencarian cepat: Key = parameter_name
                     const resultsMap = new Map();
                     existingTests.forEach(test => {
-                        // Kita hanya backup jika ada nilai atau statusnya bukan pending
                         if (test.nilai !== null || test.status === 'completed') {
                             resultsMap.set(test.parameter_name, test);
                         }
@@ -316,7 +399,6 @@ const RegistrationModel = {
                         return { ...master, qty: reqItem.qty || 1 };
                     }).filter(Boolean);
 
-                    // Recalculate Total
                     let calculatedTotal = validItems.reduce((sum, item) => sum + (Number(item.harga) * item.qty), 0);
                     if ((fieldData.status_pembayaran || 'berbayar') === 'gratis') {
                         calculatedTotal = 0;
@@ -325,15 +407,11 @@ const RegistrationModel = {
                     fieldData.total_biaya = calculatedTotal;
                     fieldData.jenis_pemeriksaan = validItems.map(i => `${i.nama_pemeriksaan} (${i.qty})`).join(', ');
 
-                    // 2. HAPUS DATA LAMA (Reset Structure)
                     await connection.execute('DELETE FROM registration_details WHERE registration_id = ?', [id]);
                     await connection.execute('DELETE FROM registration_tests WHERE registration_id = ?', [id]);
 
-                    // 3. INSERT ULANG DENGAN RESTORE HASIL
                     if (validItems.length > 0) {
                         const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
-
-                        // Query Insert Test diperbarui untuk menerima nilai & status
                         const sqlTestInsert = `
                         INSERT INTO registration_tests 
                         (registration_id, parameter_name, satuan, nilai_rujukan, metode, status, nilai, validation_status, validated_by, validation_note, validated_at) 
@@ -341,7 +419,6 @@ const RegistrationModel = {
                     `;
 
                         for (const item of validItems) {
-                            // Logic deteksi paket
                             let testParameters = [];
                             if (item.tipe === 'paket') {
                                 const [dbParams] = await connection.execute(
@@ -375,11 +452,7 @@ const RegistrationModel = {
                                         ? `${param.parameter_name} #${i + 1}`
                                         : param.parameter_name;
 
-                                    // --- LOGIC RESTORE ---
-                                    // Cek apakah nama parameter ini ada di backup
                                     const previousData = resultsMap.get(finalParamName);
-
-                                    // Jika ada backup, pakai data lama. Jika tidak, pakai default (null/pending)
                                     const valNilai = previousData ? previousData.nilai : null;
                                     const valStatus = previousData ? previousData.status : 'pending';
                                     const valValidStatus = previousData ? previousData.validation_status : 'pending';
@@ -393,9 +466,9 @@ const RegistrationModel = {
                                         param.satuan || null,
                                         param.nilai_rujukan || null,
                                         param.metode || null,
-                                        valStatus,          // Status dipulihkan
-                                        valNilai,           // Nilai dipulihkan
-                                        valValidStatus,     // Validasi dipulihkan
+                                        valStatus,
+                                        valNilai,
+                                        valValidStatus,
                                         valValidBy,
                                         valValidNote,
                                         valValidAt
@@ -406,7 +479,6 @@ const RegistrationModel = {
                     }
                 }
 
-                // B. Logic Update Data Diri (Standard)
                 const updates = [];
                 const values = [];
                 const dateFields = ['tgl_lahir', 'tgl_daftar', 'tgl_pengambilan'];
@@ -433,7 +505,79 @@ const RegistrationModel = {
         }
     },
 
-    // ... (Fungsi delete, setStatus, dll biarkan tetap sama) ...
+    async getFinanceStats(period, startDate, endDate) {
+        let dateFilter = "";
+
+        // 1. Cek jika menggunakan parameter 'period' dari frontend
+        if (period) {
+            switch (period) {
+                case 'today':
+                    dateFilter = `DATE(created_at) = CURDATE()`;
+                    break;
+                case 'this_week':
+                    // YEARWEEK mode 1 = Senin sebagai hari pertama
+                    dateFilter = `YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`;
+                    break;
+                case 'this_month':
+                    dateFilter = `YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())`;
+                    break;
+                case 'this_year':
+                    dateFilter = `YEAR(created_at) = YEAR(CURDATE())`;
+                    break;
+                case 'all_time':
+                    dateFilter = `1=1`; // Lewati filter waktu
+                    break;
+                default:
+                    dateFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
+            }
+        }
+        // 2. Fallback jika menggunakan custom StartDate & EndDate
+        else if (startDate && endDate) {
+            dateFilter = `DATE(created_at) BETWEEN '${startDate}' AND '${endDate}'`;
+        }
+        // 3. Default jika tidak ada parameter sama sekali
+        else {
+            dateFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
+        }
+
+        const sqlSummary = `
+        SELECT 
+            SUM(total_biaya) as total_revenue,
+            COUNT(id) as total_transactions,
+            SUM(CASE WHEN status_pembayaran = 'berbayar' THEN 1 ELSE 0 END) as paid_count,
+            SUM(CASE WHEN status_pembayaran = 'gratis' THEN 1 ELSE 0 END) as free_count
+        FROM registrations
+        WHERE ${dateFilter} AND status NOT IN ('batal')
+        `;
+
+        const sqlChart = `
+        SELECT 
+            DATE_FORMAT(created_at, '%Y-%m-%d') as date,
+            SUM(total_biaya) as revenue
+        FROM registrations
+        WHERE ${dateFilter} AND status_pembayaran = 'berbayar' AND status NOT IN ('batal')
+        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
+        ORDER BY date ASC
+        `;
+
+        const sqlRecent = `
+        SELECT id, no_reg, no_invoice, nama_pasien, total_biaya, status_pembayaran, created_at
+        FROM registrations
+        WHERE ${dateFilter} AND total_biaya > 0
+        ORDER BY created_at DESC
+        `;
+
+        const summaryRows = await db.query(sqlSummary);
+        const chartData = await db.query(sqlChart);
+        const recentData = await db.query(sqlRecent);
+
+        return {
+            summary: summaryRows.length > 0 ? summaryRows[0] : null,
+            chartData,
+            recentData
+        };
+    },
+
     async delete(id) {
         return await db.transaction(async (connection) => {
             await connection.execute('DELETE FROM registration_details WHERE registration_id = ?', [id]);
@@ -446,17 +590,18 @@ const RegistrationModel = {
     async setStatus(id, status) {
         let sql = 'UPDATE registrations SET status = ?';
         const params = [status];
+
         if (status === 'proses_sampling') sql += ', waktu_daftar = CURTIME(), tgl_pengambilan = CURDATE()';
         else if (status === 'diterima_lab') sql += ', tgl_daftar = CURDATE()';
         else if (status === 'proses_lab') sql += ', waktu_mulai_periksa = NOW()';
         else if (status === 'selesai_uji') sql += ', waktu_selesai_periksa = NOW()';
         else if (status === 'selesai') sql += ', updated_at = NOW()';
+
         sql += ' WHERE id = ?';
         params.push(id);
         return await db.execute(sql, params);
     },
 
-    // Tambahkan method baru untuk set status sekaligus validator
     async setStatusAndValidator(id, status, validator) {
         let sql = 'UPDATE registrations SET status = ?, validator = ?';
         const params = [status, validator];
@@ -471,36 +616,10 @@ const RegistrationModel = {
         return await db.execute(sql, params);
     },
 
-    // Update method setStatus yang ada untuk tetap kompatibel
-    async setStatus(id, status) {
-        let sql = 'UPDATE registrations SET status = ?';
-        const params = [status];
-
-        if (status === 'proses_sampling') sql += ', waktu_daftar = CURTIME(), tgl_pengambilan = CURDATE()';
-        else if (status === 'diterima_lab') sql += ', tgl_daftar = CURDATE()';
-        else if (status === 'proses_lab') sql += ', waktu_mulai_periksa = NOW()';
-        else if (status === 'selesai_uji') sql += ', waktu_selesai_periksa = NOW()';
-        else if (status === 'selesai') sql += ', updated_at = NOW()';
-
-        sql += ' WHERE id = ?';
-        params.push(id);
-        return await db.execute(sql, params);
-    },
-
-    // Update findById untuk include validator
     async findById(id) {
         const rows = await db.query('SELECT * FROM registrations WHERE id = ?', [id]);
         if (rows.length === 0) return null;
         const registration = rows[0];
-
-        // DEBUG: Log data yang ditemukan
-        console.log('Registration data found:', {
-            id: registration.id,
-            no_reg: registration.no_reg,
-            validator: registration.validator,
-            validator_exists: 'validator' in registration,
-            all_columns: Object.keys(registration)
-        });
 
         const details = await db.query(`
         SELECT rd.*, mp.nama_pemeriksaan 

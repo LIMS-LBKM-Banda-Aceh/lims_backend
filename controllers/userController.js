@@ -6,7 +6,7 @@ require('dotenv').config();
 
 exports.register = async (req, res) => {
     try {
-        const { username, password, fullname, role } = req.body;
+        const { username, password, fullname, role, instalasi_id } = req.body;
 
         if (!username || !password || !fullname) {
             return res.status(400).json({
@@ -24,7 +24,13 @@ exports.register = async (req, res) => {
             });
         }
 
-        const user = await UserModel.createUser({ username, password, fullname, role });
+        const user = await UserModel.createUser({ 
+            username, 
+            password, 
+            fullname, 
+            role, 
+            instalasi_id: (role === 'lab' && instalasi_id !== "") ? instalasi_id : null 
+        });
 
         res.status(201).json({
             success: true,
@@ -77,7 +83,8 @@ exports.login = async (req, res) => {
                 id: user.id,
                 username: user.username,
                 fullname: user.fullname,
-                role: user.role
+                role: user.role,
+                instalasi_id: user.instalasi_id
             },
             process.env.JWT_SECRET || 'your-secret-key',
             { expiresIn: '8h' }
@@ -92,7 +99,8 @@ exports.login = async (req, res) => {
                     id: user.id,
                     username: user.username,
                     fullname: user.fullname,
-                    role: user.role
+                    role: user.role,
+                    instalasi_id: user.instalasi_id
                 }
             }
         });
@@ -114,7 +122,8 @@ exports.getProfile = async (req, res) => {
                 id: user.id,
                 username: user.username,
                 fullname: user.fullname,
-                role: user.role
+                role: user.role,
+                instalasi_id: user.instalasi_id
             }
         });
     } catch (err) {
@@ -157,6 +166,34 @@ exports.updateUser = async (req, res) => {
         });
     } catch (err) {
         console.error('Error updating user:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+};
+
+exports.updateProfile = async (req, res) => {
+    try {
+        // Ambil ID dari token (req.user), BUKAN dari params. Ini mencegah user update akun orang lain.
+        const userId = req.user.id;
+        const { username, fullname, password } = req.body;
+
+        // Siapkan data yang boleh diubah (role sengaja TIDAK dimasukkan agar aman)
+        const updateData = {};
+        if (fullname) updateData.fullname = fullname;
+        if (username) updateData.username = username;
+        if (password) updateData.password = password; // Di model sudah ada logic bcrypt
+
+        const user = await UserModel.updateUser(userId, updateData);
+
+        res.json({
+            success: true,
+            message: 'Profil berhasil diperbarui',
+            data: user
+        });
+    } catch (err) {
+        console.error('Error updating profile:', err);
         res.status(500).json({
             success: false,
             message: 'Server error'

@@ -2,6 +2,78 @@
 
 const MasterModel = require('../models/masterModel');
 
+exports.getAllInstalasi = async (req, res) => {
+    try {
+        const rows = await MasterModel.getAllInstalasi();
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Error getting instalasi:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.createInstalasi = async (req, res) => {
+    try {
+        const { kode_instalasi, nama_instalasi, kode_sampel } = req.body;
+
+        if (!kode_instalasi || !nama_instalasi || !kode_sampel) {
+            return res.status(400).json({ success: false, message: 'Semua field instalasi wajib diisi' });
+        }
+
+        const result = await MasterModel.createInstalasi({ kode_instalasi, nama_instalasi, kode_sampel });
+
+        res.status(201).json({
+            success: true,
+            message: 'Instalasi berhasil ditambah',
+            data: result
+        });
+    } catch (err) {
+        console.error('Error creating instalasi:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+// --- TAMBAHAN BARU ---
+exports.updateInstalasi = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { kode_instalasi, nama_instalasi, kode_sampel } = req.body;
+
+        if (!kode_instalasi || !nama_instalasi || !kode_sampel) {
+            return res.status(400).json({ success: false, message: 'Semua field instalasi wajib diisi' });
+        }
+
+        const result = await MasterModel.updateInstalasi(id, { kode_instalasi, nama_instalasi, kode_sampel });
+
+        res.json({
+            success: true,
+            message: 'Instalasi berhasil diupdate',
+            data: result
+        });
+    } catch (err) {
+        console.error('Error updating instalasi:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.deleteInstalasi = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await MasterModel.deleteInstalasi(id);
+        res.json({ success: true, message: 'Instalasi berhasil dihapus' });
+    } catch (err) {
+        console.error('Error deleting instalasi:', err);
+        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(400).json({
+                success: false,
+                message: 'Data instalasi tidak bisa dihapus karena sudah digunakan pada master pemeriksaan.'
+            });
+        }
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+// ---------------------
+
 exports.getAllPemeriksaan = async (req, res) => {
     try {
         const rows = await MasterModel.getAllPemeriksaan();
@@ -14,15 +86,14 @@ exports.getAllPemeriksaan = async (req, res) => {
 
 exports.createPemeriksaan = async (req, res) => {
     try {
-        // Ambil field baru: nilai_rujukan, metode
-        const { kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode } = req.body;
+        const { instalasi_id, kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode } = req.body;
 
         if (!nama_pemeriksaan || !harga) {
             return res.status(400).json({ success: false, message: 'Nama dan Harga wajib diisi' });
         }
 
         const result = await MasterModel.create({
-            kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode
+            instalasi_id, kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode
         });
 
         res.status(201).json({
@@ -39,7 +110,7 @@ exports.createPemeriksaan = async (req, res) => {
 exports.updatePemeriksaan = async (req, res) => {
     try {
         const { id } = req.params;
-        const { kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode } = req.body;
+        const { instalasi_id, kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode } = req.body;
 
         const exists = await MasterModel.findById(id);
         if (!exists) {
@@ -47,7 +118,7 @@ exports.updatePemeriksaan = async (req, res) => {
         }
 
         const result = await MasterModel.update(id, {
-            kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode
+            instalasi_id, kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode
         });
 
         res.json({
@@ -83,11 +154,10 @@ exports.deletePemeriksaan = async (req, res) => {
     }
 };
 
-// Endpoint baru untuk create dengan parameter
 exports.createPemeriksaanWithParameters = async (req, res) => {
     try {
         const {
-            kategori, nama_pemeriksaan, satuan, harga,
+            instalasi_id, kategori, nama_pemeriksaan, satuan, harga,
             nilai_rujukan, metode, tipe, parameters
         } = req.body;
 
@@ -98,7 +168,6 @@ exports.createPemeriksaanWithParameters = async (req, res) => {
             });
         }
 
-        // Validasi untuk paket - HANYA CEK PARAMETER
         if (tipe === 'paket') {
             if (!parameters || parameters.length === 0) {
                 return res.status(400).json({
@@ -107,7 +176,6 @@ exports.createPemeriksaanWithParameters = async (req, res) => {
                 });
             }
 
-            // Validasi setiap parameter
             for (const param of parameters) {
                 if (!param.parameter_name?.trim()) {
                     return res.status(400).json({
@@ -119,7 +187,7 @@ exports.createPemeriksaanWithParameters = async (req, res) => {
         }
 
         const result = await MasterModel.createWithParameters({
-            kategori, nama_pemeriksaan, satuan: satuan || null,
+            instalasi_id, kategori, nama_pemeriksaan, satuan: satuan || null,
             harga, nilai_rujukan: nilai_rujukan || null,
             metode: metode || null, tipe: tipe || 'tunggal',
             parameters: parameters || []
@@ -136,12 +204,11 @@ exports.createPemeriksaanWithParameters = async (req, res) => {
     }
 };
 
-// Endpoint untuk update dengan parameter
 exports.updatePemeriksaanWithParameters = async (req, res) => {
     try {
         const { id } = req.params;
         const {
-            kategori, nama_pemeriksaan, satuan, harga,
+            instalasi_id, kategori, nama_pemeriksaan, satuan, harga,
             nilai_rujukan, metode, tipe, parameters
         } = req.body;
 
@@ -153,7 +220,6 @@ exports.updatePemeriksaanWithParameters = async (req, res) => {
             });
         }
 
-        // Validasi untuk paket
         if (tipe === 'paket' && (!parameters || parameters.length === 0)) {
             return res.status(400).json({
                 success: false,
@@ -162,7 +228,7 @@ exports.updatePemeriksaanWithParameters = async (req, res) => {
         }
 
         const result = await MasterModel.updateWithParameters(id, {
-            kategori, nama_pemeriksaan, satuan, harga,
+            instalasi_id, kategori, nama_pemeriksaan, satuan, harga,
             nilai_rujukan, metode, tipe: tipe || 'tunggal',
             parameters
         });
@@ -178,7 +244,6 @@ exports.updatePemeriksaanWithParameters = async (req, res) => {
     }
 };
 
-// Endpoint untuk get dengan detail parameter
 exports.getPemeriksaanDetail = async (req, res) => {
     try {
         const { id } = req.params;
