@@ -145,7 +145,7 @@ const RegistrationModel = {
         }
     },
 
-   async getLabQueue(userRole, instalasiId) {
+    async getLabQueue(userRole, instalasiId) {
         let sql = `
         SELECT DISTINCT r.* FROM registrations r
         LEFT JOIN registration_details rd ON r.id = rd.registration_id
@@ -154,10 +154,10 @@ const RegistrationModel = {
         `;
 
         const params = [];
-        
+
         if (userRole === 'lab') {
             sql += ` AND mp.instalasi_id = ?`;
-            params.push(instalasiId || 0); 
+            params.push(instalasiId || 0);
         }
 
         sql += ` ORDER BY r.created_at ASC`;
@@ -268,10 +268,10 @@ const RegistrationModel = {
             if (validItems.length > 0) {
                 const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
                 const sqlTestInit = `
-                INSERT INTO registration_tests 
-                (registration_id, parameter_name, satuan, nilai_rujukan, metode, status) 
-                VALUES (?, ?, ?, ?, ?, 'pending')
-                `;
+INSERT INTO registration_tests 
+(registration_id, pemeriksaan_name, parameter_name, satuan, nilai_rujukan, metode, status) 
+VALUES (?, ?, ?, ?, ?, ?, 'pending')
+`;
 
                 for (const item of validItems) {
                     let testParameters = [];
@@ -312,6 +312,7 @@ const RegistrationModel = {
 
                             await connection.execute(sqlTestInit, [
                                 registrationId,
+                                item.nama_pemeriksaan,
                                 finalParamName,
                                 param.satuan || null,
                                 param.nilai_rujukan || null,
@@ -413,10 +414,10 @@ const RegistrationModel = {
                     if (validItems.length > 0) {
                         const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
                         const sqlTestInsert = `
-                        INSERT INTO registration_tests 
-                        (registration_id, parameter_name, satuan, nilai_rujukan, metode, status, nilai, validation_status, validated_by, validation_note, validated_at) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    `;
+INSERT INTO registration_tests 
+(registration_id, pemeriksaan_name, parameter_name, satuan, nilai_rujukan, metode, status, nilai, validation_status, validated_by, validation_note, validated_at) 
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
 
                         for (const item of validItems) {
                             let testParameters = [];
@@ -462,6 +463,7 @@ const RegistrationModel = {
 
                                     await connection.execute(sqlTestInsert, [
                                         id,
+                                        item.nama_pemeriksaan,
                                         finalParamName,
                                         param.satuan || null,
                                         param.nilai_rujukan || null,
