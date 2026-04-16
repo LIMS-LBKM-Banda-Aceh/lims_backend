@@ -7,10 +7,16 @@ const path = require('node:path');
 const cors = require('cors');
 const fs = require('node:fs');
 
+const { authenticate, authorize } = require('./middleware/authMiddleware');
+
 const userRoutes = require('./routes/userRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
 const testRoutes = require('./routes/testRoutes');
 const masterRoutes = require('./routes/masterRoutes');
+const publicRoutes = require('./routes/publicRoutes');
+const { startAutomatedBackup } = require('./utils/backupDatabase');
+
+const { triggerManualBackup } = require('./utils/backupDatabase');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,6 +61,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/registrations', registrationRoutes);
 app.use('/api/master', masterRoutes);
 app.use('/api', testRoutes);
+app.use('/api/public', publicRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -105,6 +112,19 @@ app.get('/download/:filename', (req, res) => {
     }
 });
 
+app.get('/api/admin/force-backup', authenticate, authorize(['admin']), (req, res) => {
+    // Log siapa admin yang memicu backup (Opsional tapi bagus untuk audit)
+    console.log(`[Audit] Admin ${req.user.username} memicu backup manual.`);
+
+    // Jalankan fungsi backup di background
+    triggerManualBackup();
+    
+    res.json({
+        success: true,
+        message: 'Proses backup manual sedang dijalankan di background. Silakan cek terminal/console untuk melihat statusnya.'
+    });
+});
+
 // Handle 404 - menggunakan app.all('*') yang benar
 app.all('*', (req, res) => {
     res.status(404).json({
@@ -153,6 +173,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
+    startAutomatedBackup();
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
