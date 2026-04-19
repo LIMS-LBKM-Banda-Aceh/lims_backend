@@ -1,109 +1,86 @@
 // models/testModel.js
-
-const db = require('../config/dbConfig');
+const prisma = require('../config/prisma');
 
 const TestModel = {
     async createTest(registration_id, data) {
-        const sql = `
-            INSERT INTO registration_tests 
-            (registration_id, parameter_name, nilai, satuan, range_normal, status) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
-
         const status = data.nilai ? 'completed' : 'pending';
 
-        await db.execute(sql, [
-            registration_id,
-            data.parameter_name,
-            data.nilai || null,
-            data.satuan || null,
-            data.range_normal || null,
-            status
-        ]);
-
-        // Get the created test
-        const [rows] = await db.query(
-            'SELECT * FROM registration_tests WHERE registration_id = ? ORDER BY id DESC LIMIT 1',
-            [registration_id]
-        );
-        return rows[0];
+        const test = await prisma.registration_tests.create({
+            data: {
+                registration_id: Number(registration_id),
+                parameter_name: data.parameter_name,
+                nilai: data.nilai || null,
+                satuan: data.satuan || null,
+                range_normal: data.range_normal || null,
+                status: status
+            }
+        });
+        return test;
     },
 
     async getByRegistration(registration_id) {
-        const rows = await db.query(
-            'SELECT * FROM registration_tests WHERE registration_id = ? ORDER BY id ASC',
-            [registration_id]
-        );
-        return rows;
+        return await prisma.registration_tests.findMany({
+            where: { registration_id: Number(registration_id) },
+            orderBy: { id: 'asc' }
+        });
     },
 
     async updateTest(testId, data) {
-        const fields = Object.keys(data)
-            .filter(key => key !== 'id')
-            .map(key => `${key} = ?`)
-            .join(', ');
+        const updateData = { ...data };
+        delete updateData.id; // Hindari update ID
 
-        const values = Object.keys(data)
-            .filter(key => key !== 'id')
-            .map(key => data[key]);
-
-        values.push(testId);
-
-        const sql = `UPDATE registration_tests SET ${fields} WHERE id = ?`;
-        await db.execute(sql, values);
-
-        return this.findById(testId);
+        return await prisma.registration_tests.update({
+            where: { id: Number(testId) },
+            data: updateData
+        });
     },
 
     async findById(testId) {
-        const rows = await db.query(
-            'SELECT * FROM registration_tests WHERE id = ?',
-            [testId]
-        );
-        return rows[0];
+        return await prisma.registration_tests.findUnique({
+            where: { id: Number(testId) }
+        });
     },
 
     async validateTest(testId, data) {
-        const sql = `
-            UPDATE registration_tests 
-            SET validation_status = ?, 
-                validated_by = ?, 
-                validation_note = ?, 
-                validated_at = NOW() 
-            WHERE id = ?
-        `;
-
-        await db.execute(sql, [
-            data.validation_status,
-            data.validated_by,
-            data.validation_note || null,
-            testId
-        ]);
-
-        return this.findById(testId);
+        return await prisma.registration_tests.update({
+            where: { id: Number(testId) },
+            data: {
+                validation_status: data.validation_status,
+                validated_by: data.validated_by,
+                validation_note: data.validation_note || null,
+                validated_at: new Date()
+            }
+        });
     },
 
     async getTestsByRegistrationId(registrationId) {
-        const sql = `
-            SELECT rt.*, u.username as validator_name
-            FROM registration_tests rt
-            LEFT JOIN users u ON rt.validated_by = u.id
-            WHERE rt.registration_id = ?
-            ORDER BY rt.id ASC
-        `;
-        return await db.query(sql, [registrationId]);
+        const tests = await prisma.registration_tests.findMany({
+            where: { registration_id: Number(registrationId) },
+            include: {
+                users: { select: { username: true } }
+            },
+            orderBy: { id: 'asc' }
+        });
+
+        // Map ulang agar mirip hasil JOIN SQL lamamu
+        return tests.map(t => ({
+            ...t,
+            validator_name: t.users?.username || null,
+            users: undefined // buang object users bawaan Prisma
+        }));
     },
 
     async areAllTestsValidated(registrationId) {
-        const sql = `
-            SELECT COUNT(*) as total,
-                   SUM(CASE WHEN validation_status = 'approved' THEN 1 ELSE 0 END) as approved,
-                   SUM(CASE WHEN validation_status = 'rejected' THEN 1 ELSE 0 END) as rejected
-            FROM registration_tests
-            WHERE registration_id = ?
-        `;
-        const rows = await db.query(sql, [registrationId]);
-        return rows[0];
+        const tests = await prisma.registration_tests.findMany({
+            where: { registration_id: Number(registrationId) },
+            select: { validation_status: true }
+        });
+
+        const total = tests.length;
+        const approved = tests.filter(t => t.validation_status === 'approved').length;
+        const rejected = tests.filter(t => t.validation_status === 'rejected').length;
+
+        return { total, approved, rejected };
     }
 };
 

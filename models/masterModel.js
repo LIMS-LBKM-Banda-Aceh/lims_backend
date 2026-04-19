@@ -1,172 +1,167 @@
 // models/masterModel.js
-
-const db = require('../config/dbConfig');
+const prisma = require('../config/prisma');
 
 const MasterModel = {
     async getAllInstalasi() {
-        const rows = await db.query('SELECT * FROM master_instalasi ORDER BY id ASC');
-        return rows;
+        return await prisma.master_instalasi.findMany({
+            orderBy: { id: 'asc' }
+        });
     },
 
     async createInstalasi(data) {
-        const sql = `INSERT INTO master_instalasi (kode_instalasi, nama_instalasi, kode_sampel) VALUES (?, ?, ?)`;
-        const result = await db.execute(sql, [
-            data.kode_instalasi,
-            data.nama_instalasi,
-            data.kode_sampel
-        ]);
-        return { id: result.insertId, ...data };
+        return await prisma.master_instalasi.create({
+            data: {
+                kode_instalasi: data.kode_instalasi,
+                nama_instalasi: data.nama_instalasi,
+                kode_sampel: data.kode_sampel
+            }
+        });
     },
 
-    // --- TAMBAHAN BARU ---
     async updateInstalasi(id, data) {
-        const sql = `UPDATE master_instalasi SET kode_instalasi = ?, nama_instalasi = ?, kode_sampel = ? WHERE id = ?`;
-        await db.execute(sql, [data.kode_instalasi, data.nama_instalasi, data.kode_sampel, id]);
-        return { id, ...data };
+        return await prisma.master_instalasi.update({
+            where: { id: Number(id) },
+            data: {
+                kode_instalasi: data.kode_instalasi,
+                nama_instalasi: data.nama_instalasi,
+                kode_sampel: data.kode_sampel
+            }
+        });
     },
 
     async deleteInstalasi(id) {
-        const result = await db.execute('DELETE FROM master_instalasi WHERE id = ?', [id]);
-        return result;
+        return await prisma.master_instalasi.delete({
+            where: { id: Number(id) }
+        });
     },
-    // ---------------------
 
     async getAllPemeriksaan() {
-        // Tambahkan JOIN ke master_instalasi
-        const sql = `
-            SELECT mp.*, 
-            mi.nama_instalasi,
-            mi.kode_sampel,
-            (
-                SELECT COUNT(*) 
-                FROM master_pemeriksaan_parameters mpp 
-                WHERE mpp.master_pemeriksaan_id = mp.id
-            ) as total_parameters
-            FROM master_pemeriksaan mp 
-            LEFT JOIN master_instalasi mi ON mp.instalasi_id = mi.id
-            ORDER BY mp.kategori, mp.nama_pemeriksaan
-        `;
-        const rows = await db.query(sql);
-        return rows;
+        const rows = await prisma.master_pemeriksaan.findMany({
+            include: {
+                master_instalasi: true,
+                _count: { select: { master_pemeriksaan_parameters: true } }
+            },
+            orderBy: [{ kategori: 'asc' }, { nama_pemeriksaan: 'asc' }]
+        });
+
+        // Mapping agar mirip hasil JOIN lamamu dan Decimal aman
+        return rows.map(r => ({
+            ...r,
+            harga: Number(r.harga),
+            nama_instalasi: r.master_instalasi?.nama_instalasi || null,
+            kode_sampel: r.master_instalasi?.kode_sampel || null,
+            total_parameters: r._count.master_pemeriksaan_parameters,
+            master_instalasi: undefined, // bersihkan sisa Prisma
+            _count: undefined
+        }));
     },
 
     async getPemeriksaanByIds(ids) {
         if (!ids || ids.length === 0) return [];
-        const placeholders = ids.map(() => '?').join(',');
-        const sql = `SELECT * FROM master_pemeriksaan WHERE id IN (${placeholders})`;
-        return await db.query(sql, ids);
+        const rows = await prisma.master_pemeriksaan.findMany({
+            where: { id: { in: ids.map(Number) } }
+        });
+        return rows.map(r => ({ ...r, harga: Number(r.harga) }));
     },
 
     async findById(id) {
-        const rows = await db.query('SELECT * FROM master_pemeriksaan WHERE id = ?', [id]);
-        return rows[0];
+        const row = await prisma.master_pemeriksaan.findUnique({
+            where: { id: Number(id) }
+        });
+        return row ? { ...row, harga: Number(row.harga) } : null;
     },
 
     async create(data) {
-        const sql = `
-            INSERT INTO master_pemeriksaan (instalasi_id, kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `;
-        const result = await db.execute(sql, [
-            data.instalasi_id || null, // Tambahan instalasi_id
-            data.kategori,
-            data.nama_pemeriksaan,
-            data.satuan,
-            data.harga,
-            data.nilai_rujukan,
-            data.metode
-        ]);
-        return { id: result.insertId, ...data };
+        const result = await prisma.master_pemeriksaan.create({
+            data: {
+                instalasi_id: data.instalasi_id ? Number(data.instalasi_id) : null,
+                kategori: data.kategori,
+                nama_pemeriksaan: data.nama_pemeriksaan,
+                satuan: data.satuan,
+                harga: data.harga,
+                nilai_rujukan: data.nilai_rujukan,
+                metode: data.metode
+            }
+        });
+        return { ...result, harga: Number(result.harga) };
     },
 
     async update(id, data) {
-        const sql = `
-            UPDATE master_pemeriksaan 
-            SET instalasi_id = ?, kategori = ?, nama_pemeriksaan = ?, satuan = ?, harga = ?, nilai_rujukan = ?, metode = ?
-            WHERE id = ?
-        `;
-        await db.execute(sql, [
-            data.instalasi_id || null, // Tambahan instalasi_id
-            data.kategori,
-            data.nama_pemeriksaan,
-            data.satuan,
-            data.harga,
-            data.nilai_rujukan,
-            data.metode,
-            id
-        ]);
-        return { id, ...data };
+        const result = await prisma.master_pemeriksaan.update({
+            where: { id: Number(id) },
+            data: {
+                instalasi_id: data.instalasi_id ? Number(data.instalasi_id) : null,
+                kategori: data.kategori,
+                nama_pemeriksaan: data.nama_pemeriksaan,
+                satuan: data.satuan,
+                harga: data.harga,
+                nilai_rujukan: data.nilai_rujukan,
+                metode: data.metode
+            }
+        });
+        return { ...result, harga: Number(result.harga) };
     },
 
     async delete(id) {
-        const result = await db.execute('DELETE FROM master_pemeriksaan WHERE id = ?', [id]);
-        return result;
+        return await prisma.master_pemeriksaan.delete({
+            where: { id: Number(id) }
+        });
     },
 
     async getParametersByMasterId(masterId) {
-        const sql = `
-            SELECT * FROM master_pemeriksaan_parameters 
-            WHERE master_pemeriksaan_id = ? 
-            ORDER BY urutan ASC
-        `;
-        return await db.query(sql, [masterId]);
+        return await prisma.master_pemeriksaan_parameters.findMany({
+            where: { master_pemeriksaan_id: Number(masterId) },
+            orderBy: { urutan: 'asc' }
+        });
     },
 
     async createWithParameters(data) {
         const { parameters, ...masterData } = data;
 
-        return await db.transaction(async (connection) => {
-            let satuan = masterData.satuan || null;
-            let nilai_rujukan = masterData.nilai_rujukan || null;
-            let metode = masterData.metode || null;
+        let satuan = masterData.satuan || null;
+        let nilai_rujukan = masterData.nilai_rujukan || null;
+        let metode = masterData.metode || null;
 
-            if (masterData.tipe === 'paket') {
-                satuan = "Multiple";
-                nilai_rujukan = "Lihat parameter";
-                metode = "Various";
-            }
+        if (masterData.tipe === 'paket') {
+            satuan = "Multiple";
+            nilai_rujukan = "Lihat parameter";
+            metode = "Various";
+        }
 
-            const sqlMaster = `
-                INSERT INTO master_pemeriksaan 
-                (instalasi_id, kategori, nama_pemeriksaan, satuan, harga, nilai_rujukan, metode, tipe)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `;
-
-            const [resultMaster] = await connection.execute(sqlMaster, [
-                masterData.instalasi_id || null, // Tambahan instalasi_id
-                masterData.kategori,
-                masterData.nama_pemeriksaan,
-                satuan,
-                masterData.harga,
-                nilai_rujukan,
-                metode,
-                masterData.tipe || 'tunggal'
-            ]);
-
-            const masterId = resultMaster.insertId;
+        // Jalankan transaksi Prisma
+        return await prisma.$transaction(async (tx) => {
+            const master = await tx.master_pemeriksaan.create({
+                data: {
+                    instalasi_id: masterData.instalasi_id ? Number(masterData.instalasi_id) : null,
+                    kategori: masterData.kategori,
+                    nama_pemeriksaan: masterData.nama_pemeriksaan,
+                    satuan,
+                    harga: masterData.harga,
+                    nilai_rujukan,
+                    metode,
+                    tipe: masterData.tipe || 'tunggal'
+                }
+            });
 
             if (masterData.tipe === 'paket' && parameters && parameters.length > 0) {
-                const sqlParam = `
-                    INSERT INTO master_pemeriksaan_parameters 
-                    (master_pemeriksaan_id, parameter_name, satuan, nilai_rujukan, metode, urutan)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `;
-                for (let i = 0; i < parameters.length; i++) {
-                    const param = parameters[i];
-                    await connection.execute(sqlParam, [
-                        masterId,
-                        param.parameter_name,
-                        param.satuan || null,
-                        param.nilai_rujukan || null,
-                        param.metode || null,
-                        i
-                    ]);
-                }
+                const paramData = parameters.map((param, index) => ({
+                    master_pemeriksaan_id: master.id,
+                    parameter_name: param.parameter_name,
+                    satuan: param.satuan || null,
+                    nilai_rujukan: param.nilai_rujukan || null,
+                    metode: param.metode || null,
+                    urutan: index
+                }));
+
+                await tx.master_pemeriksaan_parameters.createMany({
+                    data: paramData
+                });
             }
 
             return {
-                id: masterId,
+                id: master.id,
                 ...masterData,
+                harga: Number(master.harga),
                 parameters: parameters || []
             };
         });
@@ -175,58 +170,49 @@ const MasterModel = {
     async updateWithParameters(id, data) {
         const { parameters, ...masterData } = data;
 
-        return await db.transaction(async (connection) => {
-            let satuan = masterData.satuan || null;
-            let nilai_rujukan = masterData.nilai_rujukan || null;
-            let metode = masterData.metode || null;
+        let satuan = masterData.satuan || null;
+        let nilai_rujukan = masterData.nilai_rujukan || null;
+        let metode = masterData.metode || null;
 
-            if (masterData.tipe === 'paket') {
-                satuan = "Multiple";
-                nilai_rujukan = "Lihat parameter";
-                metode = "Various";
-            }
+        if (masterData.tipe === 'paket') {
+            satuan = "Multiple";
+            nilai_rujukan = "Lihat parameter";
+            metode = "Various";
+        }
 
-            const sqlMaster = `
-                UPDATE master_pemeriksaan 
-                SET instalasi_id = ?, kategori = ?, nama_pemeriksaan = ?, satuan = ?, 
-                    harga = ?, nilai_rujukan = ?, metode = ?, tipe = ?
-                WHERE id = ?
-            `;
+        return await prisma.$transaction(async (tx) => {
+            await tx.master_pemeriksaan.update({
+                where: { id: Number(id) },
+                data: {
+                    instalasi_id: masterData.instalasi_id ? Number(masterData.instalasi_id) : null,
+                    kategori: masterData.kategori,
+                    nama_pemeriksaan: masterData.nama_pemeriksaan,
+                    satuan,
+                    harga: masterData.harga,
+                    nilai_rujukan,
+                    metode,
+                    tipe: masterData.tipe || 'tunggal'
+                }
+            });
 
-            await connection.execute(sqlMaster, [
-                masterData.instalasi_id || null, // Tambahan instalasi_id
-                masterData.kategori,
-                masterData.nama_pemeriksaan,
-                satuan,
-                masterData.harga,
-                nilai_rujukan,
-                metode,
-                masterData.tipe || 'tunggal',
-                id
-            ]);
-
-            await connection.execute(
-                'DELETE FROM master_pemeriksaan_parameters WHERE master_pemeriksaan_id = ?',
-                [id]
-            );
+            // Hapus yang lama, insert yang baru
+            await tx.master_pemeriksaan_parameters.deleteMany({
+                where: { master_pemeriksaan_id: Number(id) }
+            });
 
             if (masterData.tipe === 'paket' && parameters && parameters.length > 0) {
-                const sqlParam = `
-                    INSERT INTO master_pemeriksaan_parameters 
-                    (master_pemeriksaan_id, parameter_name, satuan, nilai_rujukan, metode, urutan)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `;
-                for (let i = 0; i < parameters.length; i++) {
-                    const param = parameters[i];
-                    await connection.execute(sqlParam, [
-                        id,
-                        param.parameter_name,
-                        param.satuan || null,
-                        param.nilai_rujukan || null,
-                        param.metode || null,
-                        i
-                    ]);
-                }
+                const paramData = parameters.map((param, index) => ({
+                    master_pemeriksaan_id: Number(id),
+                    parameter_name: param.parameter_name,
+                    satuan: param.satuan || null,
+                    nilai_rujukan: param.nilai_rujukan || null,
+                    metode: param.metode || null,
+                    urutan: index
+                }));
+
+                await tx.master_pemeriksaan_parameters.createMany({
+                    data: paramData
+                });
             }
 
             return { id, ...masterData, parameters: parameters || [] };

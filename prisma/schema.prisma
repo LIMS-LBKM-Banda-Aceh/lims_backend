@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model master_instalasi {
+  id                 Int                  @id @default(autoincrement())
+  kode_instalasi     String               @db.VarChar(10)
+  nama_instalasi     String               @db.VarChar(255)
+  kode_sampel        String               @db.VarChar(20)
+  master_pemeriksaan master_pemeriksaan[]
+  users              users[]
+}
+
+model master_pemeriksaan {
+  id                            Int                             @id @default(autoincrement())
+  instalasi_id                  Int?
+  kategori                      String                          @db.VarChar(255)
+  nama_pemeriksaan              String                          @db.VarChar(100)
+  satuan                        String?                         @db.VarChar(50)
+  nilai_rujukan                 String?                         @db.VarChar(100)
+  metode                        String?                         @db.VarChar(50)
+  harga                         Decimal                         @default(0.00) @db.Decimal(12, 2)
+  created_at                    DateTime                        @default(now()) @db.Timestamp(0)
+  tipe                          master_pemeriksaan_tipe?        @default(tunggal)
+  master_instalasi              master_instalasi?               @relation(fields: [instalasi_id], references: [id], onUpdate: Restrict, map: "fk_mp_instalasi")
+  master_pemeriksaan_parameters master_pemeriksaan_parameters[]
+  registration_details          registration_details[]
+
+  @@index([instalasi_id], map: "fk_mp_instalasi")
+}
+
+model master_pemeriksaan_parameters {
+  id                    Int                @id @default(autoincrement())
+  master_pemeriksaan_id Int
+  parameter_name        String             @db.VarChar(255)
+  satuan                String?            @db.VarChar(50)
+  nilai_rujukan         String?            @db.VarChar(255)
+  metode                String?            @db.VarChar(100)
+  urutan                Int?               @default(0)
+  created_at            DateTime           @default(now()) @db.Timestamp(0)
+  master_pemeriksaan    master_pemeriksaan @relation(fields: [master_pemeriksaan_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "master_pemeriksaan_parameters_ibfk_1")
+
+  @@index([master_pemeriksaan_id], map: "master_pemeriksaan_id")
+}
+
+model registration_details {
+  id                 Int                @id @default(autoincrement())
+  registration_id    Int
+  pemeriksaan_id     Int
+  harga_saat_ini     Decimal            @db.Decimal(12, 2)
+  registrations      registrations      @relation(fields: [registration_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "registration_details_ibfk_1")
+  master_pemeriksaan master_pemeriksaan @relation(fields: [pemeriksaan_id], references: [id], onUpdate: Restrict, map: "registration_details_ibfk_2")
+
+  @@index([pemeriksaan_id], map: "pemeriksaan_id")
+  @@index([registration_id], map: "registration_id")
+}
+
+model registration_tests {
+  id                Int                                   @id @default(autoincrement())
+  registration_id   Int
+  pemeriksaan_name  String?                               @db.VarChar(255)
+  parameter_name    String                                @db.VarChar(100)
+  nilai             String?                               @db.VarChar(100)
+  satuan            String?                               @db.VarChar(50)
+  range_normal      String?                               @db.VarChar(100)
+  status            registration_tests_status?            @default(pending)
+  validation_status registration_tests_validation_status? @default(pending)
+  validated_by      Int?
+  validation_note   String?                               @db.Text
+  validated_at      DateTime?                             @db.Timestamp(0)
+  created_at        DateTime                              @default(now()) @db.Timestamp(0)
+  metode            String?                               @db.VarChar(50)
+  nilai_rujukan     String?                               @db.VarChar(100)
+  validator_id      Int?
+  updated_at        DateTime                              @default(now()) @db.Timestamp(0)
+  registrations     registrations                         @relation(fields: [registration_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "registration_tests_ibfk_1")
+  users             users?                                @relation(fields: [validated_by], references: [id], onUpdate: Restrict, map: "registration_tests_ibfk_2")
+
+  @@index([registration_id], map: "registration_id")
+  @@index([validated_by], map: "validated_by")
+}
+
+model registrations {
+  id                    Int                              @id @default(autoincrement())
+  nama_pasien           String?                          @db.VarChar(100)
+  tgl_lahir             DateTime?                        @db.Date
+  umur                  Int?
+  jenis_kelamin         registrations_jenis_kelamin?
+  nik                   String?                          @db.VarChar(20)
+  alamat                String?                          @db.Text
+  no_kontak             String?                          @db.VarChar(20)
+  asal_sampel           String?                          @db.VarChar(100)
+  pengirim_instansi     String?                          @db.VarChar(255)
+  tgl_daftar            DateTime?                        @db.Date
+  waktu_daftar          DateTime?                        @db.Time(0)
+  tgl_pengambilan       DateTime?                        @db.Date
+  no_sampel_lab         String?                          @unique(map: "idx_unique_no_sampel") @db.VarChar(255)
+  form_pe               String?                          @db.VarChar(50)
+  petugas_input         String?                          @db.VarChar(50)
+  kode_ins              String?                          @db.VarChar(50)
+  jenis_pemeriksaan     String?                          @db.Text
+  created_at            DateTime                         @default(now()) @db.Timestamp(0)
+  updated_at            DateTime                         @default(now()) @db.Timestamp(0)
+  no_reg                String?                          @db.VarChar(50)
+  no_invoice            String?                          @db.VarChar(100)
+  status                String?                          @db.VarChar(50)
+  validator             String?                          @db.VarChar(100)
+  validated_at          DateTime?                        @db.Timestamp(0)
+  ket_pengerjaan        String?                          @db.Text
+  waktu_mulai_periksa   DateTime?                        @db.DateTime(0)
+  waktu_selesai_periksa DateTime?                        @db.DateTime(0)
+  total_biaya           Decimal?                         @default(0.00) @db.Decimal(15, 2)
+  catatan_tambahan      String?                          @db.Text
+  status_pembayaran     registrations_status_pembayaran? @default(berbayar)
+  last_sample_seq       Int?                             @default(0)
+  link_hasil            String?                          @db.VarChar(255)
+  registration_details  registration_details[]
+  registration_tests    registration_tests[]
+}
+
+model system_settings {
+  id            Int      @id @default(autoincrement())
+  setting_key   String   @unique(map: "setting_key") @db.VarChar(50)
+  setting_value String   @db.VarChar(255)
+  updated_at    DateTime @default(now()) @db.Timestamp(0)
+}
+
+model users {
+  id                 Int                  @id @default(autoincrement())
+  username           String               @db.VarChar(50)
+  fullname           String?              @db.VarChar(100)
+  password           String               @db.VarChar(255)
+  role               users_role?          @default(input)
+  created_at         DateTime             @default(now()) @db.Timestamp(0)
+  updated_at         DateTime             @default(now()) @db.Timestamp(0)
+  instalasi_id       Int?
+  registration_tests registration_tests[]
+  master_instalasi   master_instalasi?    @relation(fields: [instalasi_id], references: [id], onUpdate: Restrict, map: "fk_user_instalasi")
+
+  @@index([instalasi_id], map: "fk_user_instalasi")
+}
+
+enum registrations_jenis_kelamin {
+  L
+  P
+}
+
+enum users_role {
+  admin
+  input
+  sampler
+  lab
+  manajemen
+  kasir
+  validator
+}
+
+enum registration_tests_status {
+  pending
+  in_progress
+  completed
+}
+
+enum registration_tests_validation_status {
+  pending
+  approved
+  rejected
+}
+
+enum master_pemeriksaan_tipe {
+  tunggal
+  paket
+}
+
+enum registrations_status_pembayaran {
+  berbayar
+  gratis
+}
