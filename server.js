@@ -14,6 +14,7 @@ const registrationRoutes = require('./routes/registrationRoutes');
 const testRoutes = require('./routes/testRoutes');
 const masterRoutes = require('./routes/masterRoutes');
 const publicRoutes = require('./routes/publicRoutes');
+const settingRoutes = require('./routes/settingRoutes');
 const { startAutomatedBackup } = require('./utils/backupDatabase');
 
 const { triggerManualBackup } = require('./utils/backupDatabase');
@@ -62,6 +63,7 @@ app.use('/api/registrations', registrationRoutes);
 app.use('/api/master', masterRoutes);
 app.use('/api', testRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/settings', settingRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
