@@ -1,6 +1,10 @@
 # Node.js dependencies
 node_modules/
 
+# API Credentials & Secrets
+google-credentials.json
+*.json.secret
+
 # Environment variables
 .env
 .env.local
