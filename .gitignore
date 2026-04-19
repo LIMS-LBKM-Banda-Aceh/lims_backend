@@ -1,7 +1,12 @@
 # Node.js dependencies
 node_modules/
 
+# LIMS Specific Folders (Dilarang masuk GitHub)
+public/results/
+backups/
+
 # API Credentials & Secrets
+config/google-credentials.json
 google-credentials.json
 *.json.secret
 
@@ -28,3 +33,4 @@ Thumbs.db
 # Other temporary files
 npm-debug.log*
 yarn-debug.log*
+/generated/prisma

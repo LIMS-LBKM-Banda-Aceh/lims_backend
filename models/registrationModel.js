@@ -1,6 +1,5 @@
 // models/registrationModel.js
-
-const db = require('../config/dbConfig');
+const prisma = require('../config/prisma');
 const moment = require('moment');
 const MasterModel = require('./masterModel');
 
@@ -8,70 +7,69 @@ const RegistrationModel = {
 
     async generateNoReg() {
         const datePart = moment().format('YYYYMMDD');
-        const countQuery = await db.query(
-            'SELECT COUNT(*) as cnt FROM registrations WHERE DATE(created_at) = CURDATE()'
-        );
-        const cnt = countQuery[0] ? countQuery[0].cnt + 1 : 1;
-        return `REG-${datePart}-${String(cnt).padStart(3, '0')}`;
+
+        // Prisma butuh range object Date untuk filter "CURDATE()"
+        const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(); endOfDay.setHours(23, 59, 59, 999);
+
+        const cnt = await prisma.registrations.count({
+            where: {
+                created_at: { gte: startOfDay, lte: endOfDay }
+            }
+        });
+
+        return `REG-${datePart}-${String(cnt + 1).padStart(3, '0')}`;
     },
 
     async getAll() {
-        return await db.query('SELECT * FROM registrations ORDER BY created_at DESC');
+        const rows = await prisma.registrations.findMany({
+            orderBy: { created_at: 'desc' }
+        });
+        return rows.map(r => ({ ...r, total_biaya: Number(r.total_biaya) }));
     },
 
-    // --- FUNGSI Mengambil Nomor Urut Selanjutnya & Data Terakhir (FIXED) ---
     async getNextSampleSeq() {
-        const year = new Date().getFullYear();
-        // Mengambil nomor urut terbesar di tahun berjalan BESERTA no_sampel_lab nya
-        const sql = `
-            SELECT last_sample_seq as max_seq, no_sampel_lab 
-            FROM registrations 
-            WHERE YEAR(created_at) = ? 
-            ORDER BY last_sample_seq DESC 
-            LIMIT 1
-        `;
+        const currentYear = new Date().getFullYear();
+        const startOfYear = new Date(currentYear, 0, 1);
+        const endOfYear = new Date(currentYear, 11, 31, 23, 59, 59, 999);
 
-        try {
-            // FIX: Hapus kurung siku [] di [rows] karena db.query di setup Anda mereturn array langsung
-            const rows = await db.query(sql, [year]);
+        const lastRecord = await prisma.registrations.findFirst({
+            where: { created_at: { gte: startOfYear, lte: endOfYear } },
+            orderBy: { last_sample_seq: 'desc' },
+            select: { last_sample_seq: true, no_sampel_lab: true }
+        });
 
-            // Cek apakah rows ada dan memiliki panjang > 0
-            if (rows && rows.length > 0) {
-                const lastSeq = rows[0].max_seq || 0;
-                const lastString = rows[0].no_sampel_lab || "Belum ada data di tahun ini";
-
-                return {
-                    next_seq: lastSeq + 1,
-                    last_sample_string: lastString
-                };
-            } else {
-                // Jika tabel benar-benar kosong untuk tahun tersebut
-                return {
-                    next_seq: 1,
-                    last_sample_string: "Belum ada data registrasi"
-                };
-            }
-        } catch (error) {
-            console.error("Database query error in getNextSampleSeq:", error);
-            // Fallback aman jika query gagal
+        if (lastRecord) {
             return {
-                next_seq: 1,
-                last_sample_string: "Error memuat data terakhir"
+                next_seq: (lastRecord.last_sample_seq || 0) + 1,
+                last_sample_string: lastRecord.no_sampel_lab || "Belum ada data di tahun ini"
             };
+        } else {
+            return { next_seq: 1, last_sample_string: "Belum ada data registrasi" };
         }
     },
 
     async findById(id) {
-        const rows = await db.query('SELECT * FROM registrations WHERE id = ?', [id]);
-        if (rows.length === 0) return null;
-        const registration = rows[0];
-        const details = await db.query(`
-            SELECT rd.*, mp.nama_pemeriksaan 
-            FROM registration_details rd
-            JOIN master_pemeriksaan mp ON rd.pemeriksaan_id = mp.id
-            WHERE rd.registration_id = ?
-        `, [id]);
-        registration.details = details;
+        const registration = await prisma.registrations.findUnique({
+            where: { id: Number(id) },
+            include: {
+                registration_details: {
+                    include: { master_pemeriksaan: { select: { nama_pemeriksaan: true } } }
+                }
+            }
+        });
+
+        if (!registration) return null;
+
+        // Transformasi ke Number & Flatten Details
+        registration.total_biaya = Number(registration.total_biaya);
+        registration.details = registration.registration_details.map(rd => ({
+            ...rd,
+            harga_saat_ini: Number(rd.harga_saat_ini),
+            nama_pemeriksaan: rd.master_pemeriksaan?.nama_pemeriksaan
+        }));
+        delete registration.registration_details; // bersihkan relasi Prisma
+
         return registration;
     },
 
@@ -82,103 +80,66 @@ const RegistrationModel = {
         if (samples.length === 0) return true;
 
         for (const sample of samples) {
-            let sql = `
-                SELECT COUNT(*) as cnt FROM registrations 
-                WHERE (no_sampel_lab = ? 
-                   OR no_sampel_lab LIKE ? 
-                   OR no_sampel_lab LIKE ? 
-                   OR no_sampel_lab LIKE ?)
-            `;
-            const params = [
-                sample,
-                `${sample}, %`,
-                `%, ${sample}, %`,
-                `%, ${sample}`
+            const conditions = [
+                { no_sampel_lab: sample },
+                { no_sampel_lab: { startsWith: `${sample}, ` } },
+                { no_sampel_lab: { contains: `, ${sample}, ` } },
+                { no_sampel_lab: { endsWith: `, ${sample}` } }
             ];
 
-            if (excludeId) {
-                sql += ' AND id != ?';
-                params.push(excludeId);
-            }
+            const whereClause = excludeId
+                ? { AND: [{ id: { not: Number(excludeId) } }, { OR: conditions }] }
+                : { OR: conditions };
 
-            try {
-                const result = await db.query(sql, params);
-
-                let count = 0;
-                if (Array.isArray(result)) {
-                    if (result.length > 0 && Array.isArray(result[0])) count = result[0][0]?.cnt || 0;
-                    else if (result.length > 0 && result[0].cnt !== undefined) count = result[0].cnt;
-                    else if (result.length > 0) count = result[0]?.cnt || 0;
-                } else if (result?.cnt !== undefined) {
-                    count = result.cnt;
-                }
-
-                if (count > 0) return false;
-            } catch (error) {
-                console.error('Error in checkSampleAvailability:', error);
-                return true;
-            }
+            const count = await prisma.registrations.count({ where: whereClause });
+            if (count > 0) return false;
         }
         return true;
     },
 
     async getLastInvoice() {
         const year = new Date().getFullYear();
-        const sql = `
-        SELECT no_invoice 
-        FROM registrations 
-        WHERE no_invoice IS NOT NULL 
-          AND no_invoice != '' 
-          AND no_invoice LIKE '%/690798/PNBP/%' 
-          AND YEAR(created_at) = ?
-        ORDER BY 
-            CAST(SUBSTRING_INDEX(no_invoice, '/', 1) AS UNSIGNED) DESC,
-            id DESC 
-        LIMIT 1
-    `;
-        try {
-            const rows = await db.query(sql, [year]);
-            return rows.length > 0 ? rows[0].no_invoice : null;
-        } catch (error) {
-            console.error("Error in getLastInvoice:", error);
-            return null;
-        }
+        // RAW QUERY dibutuhkan karena CAST dan SUBSTRING_INDEX rumit di ORM
+        const rows = await prisma.$queryRaw`
+            SELECT no_invoice 
+            FROM registrations 
+            WHERE no_invoice IS NOT NULL 
+              AND no_invoice != '' 
+              AND no_invoice LIKE '%/690798/PNBP/%' 
+              AND YEAR(created_at) = ${year}
+            ORDER BY 
+                CAST(SUBSTRING_INDEX(no_invoice, '/', 1) AS UNSIGNED) DESC,
+                id DESC 
+            LIMIT 1
+        `;
+        return rows.length > 0 ? rows[0].no_invoice : null;
     },
 
     async getLabQueue(userRole, instalasiId) {
-        let sql = `
-        SELECT DISTINCT r.* FROM registrations r
-        LEFT JOIN registration_details rd ON r.id = rd.registration_id
-        LEFT JOIN master_pemeriksaan mp ON rd.pemeriksaan_id = mp.id
-        WHERE r.status NOT IN ('terdaftar', 'proses_sampling')
-        `;
-
-        const params = [];
+        const whereClause = {
+            status: { notIn: ['terdaftar', 'proses_sampling'] }
+        };
 
         if (userRole === 'lab') {
-            sql += ` AND mp.instalasi_id = ?`;
-            params.push(instalasiId || 0);
+            whereClause.registration_details = {
+                some: { master_pemeriksaan: { instalasi_id: Number(instalasiId) || 0 } }
+            };
         }
 
-        sql += ` ORDER BY r.created_at ASC`;
-        return await db.query(sql, params);
+        const rows = await prisma.registrations.findMany({
+            where: whereClause,
+            orderBy: { created_at: 'asc' }
+        });
+
+        return rows.map(r => ({ ...r, total_biaya: Number(r.total_biaya) }));
     },
 
     async findLastPatientByNik(nik) {
-        const sql = `
-        SELECT 
-            nama_pasien, 
-            tgl_lahir, 
-            jenis_kelamin, 
-            alamat, 
-            no_kontak 
-        FROM registrations 
-        WHERE nik = ? 
-        ORDER BY created_at DESC 
-        LIMIT 1
-    `;
-        const rows = await db.query(sql, [nik]);
-        return rows.length > 0 ? rows[0] : null;
+        return await prisma.registrations.findFirst({
+            where: { nik },
+            select: { nama_pasien: true, tgl_lahir: true, jenis_kelamin: true, alamat: true, no_kontak: true },
+            orderBy: { created_at: 'desc' }
+        });
     },
 
     async create(data) {
@@ -190,35 +151,28 @@ const RegistrationModel = {
 
         const isAvailable = await this.checkSampleAvailability(no_sampel_lab);
         if (!isAvailable) {
-            throw new Error(`Nomor Sampel "${no_sampel_lab}" sudah digunakan. Mohon refresh atau gunakan nomor lain.`);
+            throw new Error(`Nomor Sampel "${no_sampel_lab}" sudah digunakan.`);
         }
 
-        // AUTO-EXTRACT: Ambil nomor urut paling besar dari string inputan (misal "1 IMB 12 2 2026")
         let max_seq = 0;
         const samples = no_sampel_lab.split(',').map(s => s.trim());
         for (const s of samples) {
             const parts = s.split(' ');
             if (parts.length >= 3) {
-                const seqStr = parts[parts.length - 3]; // Posisi ke-3 dari kanan pasti nomor urut
-                const seqNum = parseInt(seqStr, 10);
-                if (!isNaN(seqNum) && seqNum > max_seq) {
-                    max_seq = seqNum;
-                }
+                const seqNum = parseInt(parts[parts.length - 3], 10);
+                if (!isNaN(seqNum) && seqNum > max_seq) max_seq = seqNum;
             }
         }
 
         const no_reg = await this.generateNoReg();
 
-        const formatDate = (dateStr) => {
+        const parseDate = (dateStr) => {
             if (!dateStr) return null;
             const m = moment(dateStr);
-            return m.isValid() ? m.format('YYYY-MM-DD HH:mm:ss') : null;
+            return m.isValid() ? m.toDate() : null;
         };
 
-        const serverTime = moment();
-        const tgl_daftar_fix = serverTime.format('YYYY-MM-DD');
-        const waktu_daftar_fix = serverTime.format('HH:mm:ss');
-
+        const serverTime = new Date();
         let total_biaya = 0;
         let validItems = [];
 
@@ -237,153 +191,128 @@ const RegistrationModel = {
             }
         }
 
-        return await db.transaction(async (connection) => {
-            const jenis_pemeriksaan_str = validItems
-                .map(i => `${i.nama_pemeriksaan} (${i.qty})`)
-                .join(', ');
+        return await prisma.$transaction(async (tx) => {
+            const jenis_pemeriksaan_str = validItems.map(i => `${i.nama_pemeriksaan} (${i.qty})`).join(', ');
 
-            // INSERT Ditambahkan kolom 'last_sample_seq'
-            const sqlReg = `
-            INSERT INTO registrations (
-                nama_pasien, tgl_lahir, umur, jenis_kelamin,
-                nik, alamat, no_kontak, asal_sampel, pengirim_instansi, 
-                tgl_daftar, waktu_daftar, tgl_pengambilan, no_sampel_lab, form_pe, petugas_input,
-                kode_ins, jenis_pemeriksaan, total_biaya, no_reg, catatan_tambahan, status, status_pembayaran, last_sample_seq
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
-            `;
+            // Insert Pendaftaran Utama
+            const reg = await tx.registrations.create({
+                data: {
+                    nama_pasien: data.nama_pasien,
+                    tgl_lahir: parseDate(data.tgl_lahir),
+                    umur: data.umur || null,
+                    jenis_kelamin: data.jenis_kelamin || 'L',
+                    nik: data.nik || null,
+                    alamat: data.alamat || null,
+                    no_kontak: data.no_kontak || null,
+                    asal_sampel: data.asal_sampel || null,
+                    pengirim_instansi: data.pengirim_instansi || null,
+                    tgl_daftar: serverTime,
+                    waktu_daftar: serverTime,
+                    tgl_pengambilan: parseDate(data.tgl_pengambilan),
+                    no_sampel_lab: no_sampel_lab,
+                    form_pe: data.form_pe || null,
+                    petugas_input: data.petugas_input || null,
+                    kode_ins: data.kode_ins || null,
+                    jenis_pemeriksaan: jenis_pemeriksaan_str,
+                    total_biaya: total_biaya,
+                    no_reg: no_reg,
+                    catatan_tambahan: data.catatan_tambahan || null,
+                    status: 'terdaftar',
+                    status_pembayaran: data.status_pembayaran || 'berbayar',
+                    last_sample_seq: max_seq
+                }
+            });
 
-            const paramsReg = [
-                data.nama_pasien, formatDate(data.tgl_lahir), data.umur || null, data.jenis_kelamin || 'L',
-                data.nik || null, data.alamat || null, data.no_kontak || null,
-                data.asal_sampel || null, data.pengirim_instansi || null,
-                tgl_daftar_fix, waktu_daftar_fix, formatDate(data.tgl_pengambilan),
-                no_sampel_lab, data.form_pe || null, data.petugas_input || null,
-                data.kode_ins || null, jenis_pemeriksaan_str, total_biaya, no_reg,
-                data.catatan_tambahan || null, 'terdaftar', data.status_pembayaran || 'berbayar', max_seq
-            ];
-
-            const [resultReg] = await connection.execute(sqlReg, paramsReg);
-            const registrationId = resultReg.insertId;
-
+            // Insert Detail dan Testing Parameter
             if (validItems.length > 0) {
-                const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
-                const sqlTestInit = `
-INSERT INTO registration_tests 
-(registration_id, pemeriksaan_name, parameter_name, satuan, nilai_rujukan, metode, status) 
-VALUES (?, ?, ?, ?, ?, ?, 'pending')
-`;
-
                 for (const item of validItems) {
                     let testParameters = [];
                     if (item.tipe === 'paket') {
-                        const [dbParams] = await connection.execute(
-                            `SELECT parameter_name, satuan, nilai_rujukan, metode 
-                             FROM master_pemeriksaan_parameters 
-                             WHERE master_pemeriksaan_id = ? 
-                             ORDER BY urutan ASC`,
-                            [item.id]
-                        );
+                        const dbParams = await tx.master_pemeriksaan_parameters.findMany({
+                            where: { master_pemeriksaan_id: item.id },
+                            orderBy: { urutan: 'asc' }
+                        });
 
-                        if (dbParams.length > 0) {
-                            testParameters = dbParams;
-                        } else {
-                            testParameters.push({
-                                parameter_name: item.nama_pemeriksaan,
-                                satuan: item.satuan,
-                                nilai_rujukan: item.nilai_rujukan,
-                                metode: item.metode
-                            });
-                        }
+                        if (dbParams.length > 0) testParameters = dbParams;
+                        else testParameters.push({
+                            parameter_name: item.nama_pemeriksaan, satuan: item.satuan,
+                            nilai_rujukan: item.nilai_rujukan, metode: item.metode
+                        });
                     } else {
                         testParameters.push({
-                            parameter_name: item.nama_pemeriksaan,
-                            satuan: item.satuan,
-                            nilai_rujukan: item.nilai_rujukan,
-                            metode: item.metode
+                            parameter_name: item.nama_pemeriksaan, satuan: item.satuan,
+                            nilai_rujukan: item.nilai_rujukan, metode: item.metode
                         });
                     }
 
                     for (let i = 0; i < item.qty; i++) {
-                        await connection.execute(sqlDetail, [registrationId, item.id, item.harga]);
-                        for (const param of testParameters) {
-                            const finalParamName = item.qty > 1
-                                ? `${param.parameter_name} #${i + 1}`
-                                : param.parameter_name;
+                        await tx.registration_details.create({
+                            data: {
+                                registration_id: reg.id,
+                                pemeriksaan_id: item.id,
+                                harga_saat_ini: item.harga
+                            }
+                        });
 
-                            await connection.execute(sqlTestInit, [
-                                registrationId,
-                                item.nama_pemeriksaan,
-                                finalParamName,
-                                param.satuan || null,
-                                param.nilai_rujukan || null,
-                                param.metode || null
-                            ]);
+                        for (const param of testParameters) {
+                            const finalParamName = item.qty > 1 ? `${param.parameter_name} #${i + 1}` : param.parameter_name;
+                            await tx.registration_tests.create({
+                                data: {
+                                    registration_id: reg.id,
+                                    pemeriksaan_name: item.nama_pemeriksaan,
+                                    parameter_name: finalParamName,
+                                    satuan: param.satuan || null,
+                                    nilai_rujukan: param.nilai_rujukan || null,
+                                    metode: param.metode || null,
+                                    status: 'pending'
+                                }
+                            });
                         }
                     }
                 }
             }
 
-            return { id: registrationId, no_reg: no_reg };
+            return { id: reg.id, no_reg: no_reg };
         });
     },
 
     async update(id, data) {
         const { items, pemeriksaan_ids, ...fieldData } = data;
 
-        const formatDate = (dateStr) => {
+        const parseDate = (dateStr) => {
             if (!dateStr) return null;
             const m = moment(dateStr);
-            return m.isValid() ? m.format('YYYY-MM-DD HH:mm:ss') : null;
+            return m.isValid() ? m.toDate() : null;
         };
-
-        // DITAMBAHKAN last_sample_seq KE ALLOWED FIELDS
-        const ALLOWED_FIELDS = [
-            'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin',
-            'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
-            'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'ket_pengerjaan',
-            'no_sampel_lab', 'petugas_input', 'no_invoice',
-            'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya',
-            'status', 'link_hasil', 'status_pembayaran', 'last_sample_seq'
-        ];
 
         if (data.no_sampel_lab) {
             const no_sampel_clean = data.no_sampel_lab.trim().toUpperCase();
             const isAvailable = await this.checkSampleAvailability(no_sampel_clean, id);
 
-            if (!isAvailable) {
-                throw new Error(`Nomor Sampel "${no_sampel_clean}" sudah digunakan oleh pasien lain.`);
-            }
+            if (!isAvailable) throw new Error(`Nomor Sampel "${no_sampel_clean}" sudah digunakan.`);
             data.no_sampel_lab = no_sampel_clean;
 
-            // Extrak jika diupdate
             let max_seq = 0;
             const samples = no_sampel_clean.split(',').map(s => s.trim());
             for (const s of samples) {
                 const parts = s.split(' ');
                 if (parts.length >= 3) {
-                    const seqStr = parts[parts.length - 3];
-                    const seqNum = parseInt(seqStr, 10);
-                    if (!isNaN(seqNum) && seqNum > max_seq) {
-                        max_seq = seqNum;
-                    }
+                    const seqNum = parseInt(parts[parts.length - 3], 10);
+                    if (!isNaN(seqNum) && seqNum > max_seq) max_seq = seqNum;
                 }
             }
             fieldData.last_sample_seq = max_seq;
         }
 
         try {
-            return await db.transaction(async (connection) => {
+            return await prisma.$transaction(async (tx) => {
                 let itemsToProcess = items;
                 if (!itemsToProcess && pemeriksaan_ids) {
-                    itemsToProcess = pemeriksaan_ids.map(id => ({ id, qty: 1 }));
+                    itemsToProcess = pemeriksaan_ids.map(pid => ({ id: pid, qty: 1 }));
                 }
 
                 if (itemsToProcess && Array.isArray(itemsToProcess)) {
-                    const [existingTests] = await connection.query(
-                        'SELECT parameter_name, nilai, status, validation_status, validated_by, validation_note, validated_at FROM registration_tests WHERE registration_id = ?',
-                        [id]
-                    );
-
+                    const existingTests = await tx.registration_tests.findMany({ where: { registration_id: Number(id) } });
                     const resultsMap = new Map();
                     existingTests.forEach(test => {
                         if (test.nilai !== null || test.status === 'completed') {
@@ -401,254 +330,189 @@ VALUES (?, ?, ?, ?, ?, ?, 'pending')
                     }).filter(Boolean);
 
                     let calculatedTotal = validItems.reduce((sum, item) => sum + (Number(item.harga) * item.qty), 0);
-                    if ((fieldData.status_pembayaran || 'berbayar') === 'gratis') {
-                        calculatedTotal = 0;
-                    }
+                    if ((fieldData.status_pembayaran || 'berbayar') === 'gratis') calculatedTotal = 0;
 
                     fieldData.total_biaya = calculatedTotal;
                     fieldData.jenis_pemeriksaan = validItems.map(i => `${i.nama_pemeriksaan} (${i.qty})`).join(', ');
 
-                    await connection.execute('DELETE FROM registration_details WHERE registration_id = ?', [id]);
-                    await connection.execute('DELETE FROM registration_tests WHERE registration_id = ?', [id]);
+                    // Bersihkan record lama
+                    await tx.registration_details.deleteMany({ where: { registration_id: Number(id) } });
+                    await tx.registration_tests.deleteMany({ where: { registration_id: Number(id) } });
 
                     if (validItems.length > 0) {
-                        const sqlDetail = `INSERT INTO registration_details (registration_id, pemeriksaan_id, harga_saat_ini) VALUES (?, ?, ?)`;
-                        const sqlTestInsert = `
-INSERT INTO registration_tests 
-(registration_id, pemeriksaan_name, parameter_name, satuan, nilai_rujukan, metode, status, nilai, validation_status, validated_by, validation_note, validated_at) 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
-
                         for (const item of validItems) {
                             let testParameters = [];
                             if (item.tipe === 'paket') {
-                                const [dbParams] = await connection.execute(
-                                    `SELECT parameter_name, satuan, nilai_rujukan, metode 
-                                 FROM master_pemeriksaan_parameters 
-                                 WHERE master_pemeriksaan_id = ? 
-                                 ORDER BY urutan ASC`,
-                                    [item.id]
-                                );
+                                const dbParams = await tx.master_pemeriksaan_parameters.findMany({
+                                    where: { master_pemeriksaan_id: item.id }, orderBy: { urutan: 'asc' }
+                                });
                                 if (dbParams.length > 0) testParameters = dbParams;
-                                else testParameters.push({
-                                    parameter_name: item.nama_pemeriksaan,
-                                    satuan: item.satuan,
-                                    nilai_rujukan: item.nilai_rujukan,
-                                    metode: item.metode
-                                });
+                                else testParameters.push({ parameter_name: item.nama_pemeriksaan, satuan: item.satuan, nilai_rujukan: item.nilai_rujukan, metode: item.metode });
                             } else {
-                                testParameters.push({
-                                    parameter_name: item.nama_pemeriksaan,
-                                    satuan: item.satuan,
-                                    nilai_rujukan: item.nilai_rujukan,
-                                    metode: item.metode
-                                });
+                                testParameters.push({ parameter_name: item.nama_pemeriksaan, satuan: item.satuan, nilai_rujukan: item.nilai_rujukan, metode: item.metode });
                             }
 
                             for (let i = 0; i < item.qty; i++) {
-                                await connection.execute(sqlDetail, [id, item.id, item.harga]);
+                                await tx.registration_details.create({
+                                    data: { registration_id: Number(id), pemeriksaan_id: item.id, harga_saat_ini: item.harga }
+                                });
 
                                 for (const param of testParameters) {
-                                    const finalParamName = item.qty > 1
-                                        ? `${param.parameter_name} #${i + 1}`
-                                        : param.parameter_name;
-
+                                    const finalParamName = item.qty > 1 ? `${param.parameter_name} #${i + 1}` : param.parameter_name;
                                     const previousData = resultsMap.get(finalParamName);
-                                    const valNilai = previousData ? previousData.nilai : null;
-                                    const valStatus = previousData ? previousData.status : 'pending';
-                                    const valValidStatus = previousData ? previousData.validation_status : 'pending';
-                                    const valValidBy = previousData ? previousData.validated_by : null;
-                                    const valValidNote = previousData ? previousData.validation_note : null;
-                                    const valValidAt = previousData ? previousData.validated_at : null;
 
-                                    await connection.execute(sqlTestInsert, [
-                                        id,
-                                        item.nama_pemeriksaan,
-                                        finalParamName,
-                                        param.satuan || null,
-                                        param.nilai_rujukan || null,
-                                        param.metode || null,
-                                        valStatus,
-                                        valNilai,
-                                        valValidStatus,
-                                        valValidBy,
-                                        valValidNote,
-                                        valValidAt
-                                    ]);
+                                    await tx.registration_tests.create({
+                                        data: {
+                                            registration_id: Number(id),
+                                            pemeriksaan_name: item.nama_pemeriksaan,
+                                            parameter_name: finalParamName,
+                                            satuan: param.satuan || null,
+                                            nilai_rujukan: param.nilai_rujukan || null,
+                                            metode: param.metode || null,
+                                            status: previousData ? previousData.status : 'pending',
+                                            nilai: previousData ? previousData.nilai : null,
+                                            validation_status: previousData ? previousData.validation_status : 'pending',
+                                            validated_by: previousData ? previousData.validated_by : null,
+                                            validation_note: previousData ? previousData.validation_note : null,
+                                            validated_at: previousData ? previousData.validated_at : null
+                                        }
+                                    });
                                 }
                             }
                         }
                     }
                 }
 
-                const updates = [];
-                const values = [];
+                // Update fields utama
+                const ALLOWED_FIELDS = [
+                    'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin', 'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
+                    'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'ket_pengerjaan', 'no_sampel_lab', 'petugas_input', 'no_invoice',
+                    'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya', 'status', 'link_hasil', 'status_pembayaran', 'last_sample_seq'
+                ];
+
+                const updatePayload = {};
                 const dateFields = ['tgl_lahir', 'tgl_daftar', 'tgl_pengambilan'];
 
                 for (const [key, value] of Object.entries(fieldData)) {
                     if (ALLOWED_FIELDS.includes(key)) {
-                        updates.push(`${key} = ?`);
-                        values.push(dateFields.includes(key) && value ? formatDate(value) : value);
+                        updatePayload[key] = dateFields.includes(key) && value ? parseDate(value) : value;
                     }
                 }
 
-                if (updates.length > 0) {
-                    values.push(id);
-                    await connection.execute(`UPDATE registrations SET ${updates.join(', ')} WHERE id = ?`, values);
+                if (Object.keys(updatePayload).length > 0) {
+                    await tx.registrations.update({
+                        where: { id: Number(id) },
+                        data: updatePayload
+                    });
                 }
 
                 return { id, ...data };
             });
         } catch (err) {
-            if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-                throw new Error(`Gagal Update: Nomor Sampel sudah ada di sistem.`);
-            }
+            // Memastikan duplikat ditangkap (P2002 di Prisma adalah Unqiue Constraint failed)
+            if (err.code === 'P2002') throw new Error(`Gagal Update: Nomor Sampel sudah ada di sistem.`);
             throw err;
         }
     },
 
     async getFinanceStats(period, startDate, endDate) {
+        // PERHATIAN: Dipertahankan pakai Unsafe Query karena kerumitan YEARWEEK dan DATE filter.
         let dateFilter = "";
-
-        // 1. Cek jika menggunakan parameter 'period' dari frontend
         if (period) {
             switch (period) {
-                case 'today':
-                    dateFilter = `DATE(created_at) = CURDATE()`;
-                    break;
-                case 'this_week':
-                    // YEARWEEK mode 1 = Senin sebagai hari pertama
-                    dateFilter = `YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`;
-                    break;
-                case 'this_month':
-                    dateFilter = `YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())`;
-                    break;
-                case 'this_year':
-                    dateFilter = `YEAR(created_at) = YEAR(CURDATE())`;
-                    break;
-                case 'all_time':
-                    dateFilter = `1=1`; // Lewati filter waktu
-                    break;
-                default:
-                    dateFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
+                case 'today': dateFilter = `DATE(created_at) = CURDATE()`; break;
+                case 'this_week': dateFilter = `YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`; break;
+                case 'this_month': dateFilter = `YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())`; break;
+                case 'this_year': dateFilter = `YEAR(created_at) = YEAR(CURDATE())`; break;
+                case 'all_time': dateFilter = `1=1`; break;
+                default: dateFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
             }
-        }
-        // 2. Fallback jika menggunakan custom StartDate & EndDate
-        else if (startDate && endDate) {
+        } else if (startDate && endDate) {
             dateFilter = `DATE(created_at) BETWEEN '${startDate}' AND '${endDate}'`;
-        }
-        // 3. Default jika tidak ada parameter sama sekali
-        else {
+        } else {
             dateFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
         }
 
-        const sqlSummary = `
-        SELECT 
-            SUM(total_biaya) as total_revenue,
-            COUNT(id) as total_transactions,
-            SUM(CASE WHEN status_pembayaran = 'berbayar' THEN 1 ELSE 0 END) as paid_count,
-            SUM(CASE WHEN status_pembayaran = 'gratis' THEN 1 ELSE 0 END) as free_count
-        FROM registrations
-        WHERE ${dateFilter} AND status NOT IN ('batal')
-        `;
+        const sqlSummary = `SELECT SUM(total_biaya) as total_revenue, COUNT(id) as total_transactions, SUM(CASE WHEN status_pembayaran = 'berbayar' THEN 1 ELSE 0 END) as paid_count, SUM(CASE WHEN status_pembayaran = 'gratis' THEN 1 ELSE 0 END) as free_count FROM registrations WHERE ${dateFilter} AND status NOT IN ('batal')`;
+        const sqlChart = `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') as date, SUM(total_biaya) as revenue FROM registrations WHERE ${dateFilter} AND status_pembayaran = 'berbayar' AND status NOT IN ('batal') GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d') ORDER BY date ASC`;
+        const sqlRecent = `SELECT id, no_reg, no_invoice, nama_pasien, total_biaya, status_pembayaran, created_at FROM registrations WHERE ${dateFilter} AND total_biaya > 0 ORDER BY created_at DESC`;
 
-        const sqlChart = `
-        SELECT 
-            DATE_FORMAT(created_at, '%Y-%m-%d') as date,
-            SUM(total_biaya) as revenue
-        FROM registrations
-        WHERE ${dateFilter} AND status_pembayaran = 'berbayar' AND status NOT IN ('batal')
-        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
-        ORDER BY date ASC
-        `;
-
-        const sqlRecent = `
-        SELECT id, no_reg, no_invoice, nama_pasien, total_biaya, status_pembayaran, created_at
-        FROM registrations
-        WHERE ${dateFilter} AND total_biaya > 0
-        ORDER BY created_at DESC
-        `;
-
-        const summaryRows = await db.query(sqlSummary);
-        const chartData = await db.query(sqlChart);
-        const recentData = await db.query(sqlRecent);
+        const summaryRows = await prisma.$queryRawUnsafe(sqlSummary);
+        const chartData = await prisma.$queryRawUnsafe(sqlChart);
+        const recentData = await prisma.$queryRawUnsafe(sqlRecent);
 
         return {
-            summary: summaryRows.length > 0 ? summaryRows[0] : null,
-            chartData,
-            recentData
+            summary: summaryRows.length > 0 ? {
+                total_revenue: Number(summaryRows[0].total_revenue || 0),
+                total_transactions: Number(summaryRows[0].total_transactions || 0),
+                paid_count: Number(summaryRows[0].paid_count || 0),
+                free_count: Number(summaryRows[0].free_count || 0)
+            } : null,
+            chartData: chartData.map(d => ({ ...d, revenue: Number(d.revenue) })),
+            recentData: recentData.map(d => ({ ...d, total_biaya: Number(d.total_biaya) }))
         };
     },
 
     async delete(id) {
-        return await db.transaction(async (connection) => {
-            await connection.execute('DELETE FROM registration_details WHERE registration_id = ?', [id]);
-            await connection.execute('DELETE FROM registration_tests WHERE registration_id = ?', [id]);
-            const [result] = await connection.execute('DELETE FROM registrations WHERE id = ?', [id]);
-            return result.affectedRows > 0;
-        });
+        // Cascade delete diurus oleh Prisma, cukup delete parent-nya
+        try {
+            await prisma.registrations.delete({ where: { id: Number(id) } });
+            return true;
+        } catch {
+            return false;
+        }
     },
 
     async setStatus(id, status) {
-        let sql = 'UPDATE registrations SET status = ?';
-        const params = [status];
+        const updateData = { status: status, updated_at: new Date() };
 
-        if (status === 'proses_sampling') sql += ', waktu_daftar = CURTIME(), tgl_pengambilan = CURDATE()';
-        else if (status === 'diterima_lab') sql += ', tgl_daftar = CURDATE()';
-        else if (status === 'proses_lab') sql += ', waktu_mulai_periksa = NOW()';
-        else if (status === 'selesai_uji') sql += ', waktu_selesai_periksa = NOW()';
-        else if (status === 'selesai') sql += ', updated_at = NOW()';
+        if (status === 'proses_sampling') {
+            updateData.waktu_daftar = new Date();
+            updateData.tgl_pengambilan = new Date();
+        } else if (status === 'diterima_lab') {
+            updateData.tgl_daftar = new Date();
+        } else if (status === 'proses_lab') {
+            updateData.waktu_mulai_periksa = new Date();
+        } else if (status === 'selesai_uji') {
+            updateData.waktu_selesai_periksa = new Date();
+        }
 
-        sql += ' WHERE id = ?';
-        params.push(id);
-        return await db.execute(sql, params);
+        return await prisma.registrations.update({
+            where: { id: Number(id) },
+            data: updateData
+        });
     },
 
     async setStatusAndValidator(id, status, validator) {
-        let sql = 'UPDATE registrations SET status = ?, validator = ?';
-        const params = [status, validator];
+        const updateData = { status, validator, updated_at: new Date() };
+        if (status === 'selesai') updateData.validated_at = new Date();
 
-        if (status === 'selesai') {
-            sql += ', validated_at = NOW()';
-        }
-
-        sql += ' WHERE id = ?';
-        params.push(id);
-
-        return await db.execute(sql, params);
-    },
-
-    async findById(id) {
-        const rows = await db.query('SELECT * FROM registrations WHERE id = ?', [id]);
-        if (rows.length === 0) return null;
-        const registration = rows[0];
-
-        const details = await db.query(`
-        SELECT rd.*, mp.nama_pemeriksaan 
-        FROM registration_details rd
-        JOIN master_pemeriksaan mp ON rd.pemeriksaan_id = mp.id
-        WHERE rd.registration_id = ?
-    `, [id]);
-        registration.details = details;
-
-        return registration;
+        return await prisma.registrations.update({
+            where: { id: Number(id) },
+            data: updateData
+        });
     },
 
     async setLinkResult(id, link) {
-        await db.execute(
-            'UPDATE registrations SET link_hasil = ?, status = ?, updated_at = NOW() WHERE id = ?',
-            [link, 'selesai', id]
-        );
-        return this.findById(id);
+        return await prisma.registrations.update({
+            where: { id: Number(id) },
+            data: { link_hasil: link, status: 'selesai', updated_at: new Date() }
+        });
     },
 
     async search(query) {
-        const sql = `
-        SELECT * FROM registrations 
-        WHERE nama_pasien LIKE ? OR no_reg LIKE ? OR no_sampel_lab LIKE ? OR nik LIKE ?
-        ORDER BY created_at DESC`;
-        const searchTerm = `%${query}%`;
-        return await db.query(sql, [searchTerm, searchTerm, searchTerm, searchTerm]);
+        const rows = await prisma.registrations.findMany({
+            where: {
+                OR: [
+                    { nama_pasien: { contains: query } },
+                    { no_reg: { contains: query } },
+                    { no_sampel_lab: { contains: query } },
+                    { nik: { contains: query } }
+                ]
+            },
+            orderBy: { created_at: 'desc' }
+        });
+        return rows.map(r => ({ ...r, total_biaya: Number(r.total_biaya) }));
     }
 };
 
