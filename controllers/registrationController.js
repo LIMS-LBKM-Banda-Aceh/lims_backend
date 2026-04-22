@@ -2,8 +2,9 @@
 
 const RegistrationModel = require('../models/registrationModel');
 const TestModel = require('../models/testModel');
-const fs = require('node:fs');
+const prisma = require('../config/prisma');
 const path = require('node:path');
+const fs = require('node:fs');
 require('dotenv').config();
 
 const PUBLIC_RESULTS_DIR = path.join(__dirname, '..', 'public', 'results');
@@ -356,7 +357,7 @@ exports.getNextSampleSeq = async (req, res) => {
 
 exports.getLabQueue = async (req, res) => {
     try {
-        const user = req.user; 
+        const user = req.user;
         const rows = await RegistrationModel.getLabQueue(user.role, user.instalasi_id);
         res.json({ success: true, data: rows });
     } catch (err) {
@@ -469,27 +470,27 @@ exports.startProcessing = async (req, res) => {
 // fungsi getRegistrationStats untuk dashboard yang lebih detail
 exports.getRegistrationStats = async (req, res) => {
     try {
-        const db = require('../config/dbConfig');
         const sql = `
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as waiting_queue,
-        SUM(CASE WHEN status = 'proses_sampling' THEN 1 ELSE 0 END) as in_sampling,
-        SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
-        SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as in_testing,
-        SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as waiting_validation,
-        SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as completed
-      FROM registrations
-    `;
+          SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'terdaftar' THEN 1 ELSE 0 END) as waiting_queue,
+            SUM(CASE WHEN status = 'proses_sampling' THEN 1 ELSE 0 END) as in_sampling,
+            SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
+            SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as in_testing,
+            SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as waiting_validation,
+            SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as completed
+          FROM registrations
+        `;
 
-        const result = await db.query(sql);
+        // Eksekusi pakai Prisma
+        const result = await prisma.$queryRawUnsafe(sql);
         const data = result[0];
 
         res.json({
             success: true,
             data: result.length > 0 ? {
-                ...data,
-                // PERBAIKAN: Jangan gabungkan, kirim terpisah
+                // WAJIB di-parsing pakai Number() karena Prisma return BigInt
+                total: Number(data.total || 0),
                 waiting_queue: Number(data.waiting_queue || 0),
                 in_sampling: Number(data.in_sampling || 0),
                 diterima_lab: Number(data.diterima_lab || 0),
@@ -541,8 +542,6 @@ exports.finalizeRegistration = async (req, res) => {
 
 exports.getAllTimeStats = async (req, res) => {
     try {
-        const db = require('../config/dbConfig');
-
         const sql = `
             SELECT 
                 COUNT(*) as total,
@@ -554,17 +553,21 @@ exports.getAllTimeStats = async (req, res) => {
             FROM registrations
         `;
 
-        const result = await db.query(sql);
+        const result = await prisma.$queryRawUnsafe(sql);
+        const data = result[0];
 
         res.json({
             success: true,
-            data: result.length > 0 ? result[0] : {
-                total: 0,
-                terdaftar: 0,
-                diterima_lab: 0,
-                proses_lab: 0,
-                selesai_uji: 0,
-                selesai: 0
+            data: result.length > 0 ? {
+                // Sekali lagi, parsing ke Number agar JSON aman
+                total: Number(data.total || 0),
+                terdaftar: Number(data.terdaftar || 0),
+                diterima_lab: Number(data.diterima_lab || 0),
+                proses_lab: Number(data.proses_lab || 0),
+                selesai_uji: Number(data.selesai_uji || 0),
+                selesai: Number(data.selesai || 0)
+            } : {
+                total: 0, terdaftar: 0, diterima_lab: 0, proses_lab: 0, selesai_uji: 0, selesai: 0
             }
         });
     } catch (err) {

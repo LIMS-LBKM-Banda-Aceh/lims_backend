@@ -132,24 +132,38 @@ exports.updatePemeriksaan = async (req, res) => {
     }
 };
 
+// exports.deletePemeriksaan = async (req, res) => {
+//     try {
+//         const { id } = req.params;
+//         const exists = await MasterModel.findById(id);
+//         if (!exists) {
+//             return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
+//         }
+
+//         await MasterModel.delete(id);
+//         res.json({ success: true, message: 'Data pemeriksaan berhasil dihapus' });
+//     } catch (err) {
+//         console.error('Error deleting pemeriksaan:', err);
+//         if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: 'Data tidak bisa dihapus karena sudah digunakan dalam riwayat registrasi.'
+//             });
+//         }
+//         res.status(500).json({ success: false, message: 'Server error' });
+//     }
+// };
+
 exports.deletePemeriksaan = async (req, res) => {
     try {
-        const { id } = req.params;
-        const exists = await MasterModel.findById(id);
-        if (!exists) {
-            return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
-        }
-
-        await MasterModel.delete(id);
-        res.json({ success: true, message: 'Data pemeriksaan berhasil dihapus' });
+        await MasterModel.delete(req.params.id);
+        res.json({ success: true, message: 'Data berhasil dihapus' });
     } catch (err) {
-        console.error('Error deleting pemeriksaan:', err);
-        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
-            return res.status(400).json({
-                success: false,
-                message: 'Data tidak bisa dihapus karena sudah digunakan dalam riwayat registrasi.'
-            });
+        // Tampilkan pesan error spesifik jika gagal hapus karena constraint
+        if (err.message.includes('tidak bisa dihapus')) {
+            return res.status(400).json({ success: false, message: err.message });
         }
+        console.error('Error:', err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
