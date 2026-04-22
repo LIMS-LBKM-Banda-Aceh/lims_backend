@@ -1,4 +1,4 @@
-const db = require('../config/dbConfig');
+const prisma = require('../config/prisma'); 
 
 exports.trackRegistration = async (req, res) => {
     try {
@@ -11,46 +11,47 @@ exports.trackRegistration = async (req, res) => {
             });
         }
 
-        const sql = `
-            SELECT 
-                id, no_reg, nama_pasien, tgl_daftar, 
-                COALESCE(status, 'terdaftar') AS status,   -- <-- default value
-                link_hasil 
-                FROM registrations 
-                WHERE no_reg = ? AND nik = ?
-        `;
+        // Pakai Prisma ORM langsung
+        const registration = await prisma.registrations.findFirst({
+            where: {
+                no_reg: no_reg,
+                nik: nik
+            },
+            select: {
+                id: true,
+                no_reg: true,
+                nama_pasien: true,
+                tgl_daftar: true,
+                status: true,
+                link_hasil: true
+            }
+        });
 
-        const dbResult = await db.query(sql, [no_reg, nik]);
-        
-        // 🔥 TRIK SENIOR: Normalisasi hasil query agar kebal dari perbedaan library mysql/mysql2
-        const rows = Array.isArray(dbResult[0]) ? dbResult[0] : dbResult;
-
-        if (!rows || rows.length === 0) {
+        if (!registration) {
             return res.status(404).json({
                 success: false,
                 message: 'Data tidak ditemukan. Pastikan No. Registrasi dan NIK benar.'
             });
         }
 
-        const registration = rows[0];
+        // Set default status jika null
+        registration.status = registration.status || 'terdaftar';
 
-        const detailsSql = `
-            SELECT mp.nama_pemeriksaan 
-            FROM registration_details rd
-            JOIN master_pemeriksaan mp ON rd.pemeriksaan_id = mp.id
-            WHERE rd.registration_id = ?
-        `;
-        
-        const detailsResult = await db.query(detailsSql, [registration.id]);
-        // 🔥 Lakukan normalisasi yang sama untuk details
-        const details = Array.isArray(detailsResult[0]) ? detailsResult[0] : detailsResult;
+        // Ambil details menggunakan Prisma
+        const details = await prisma.registration_details.findMany({
+            where: { registration_id: registration.id },
+            include: {
+                master_pemeriksaan: {
+                    select: { nama_pemeriksaan: true }
+                }
+            }
+        });
 
         res.json({
             success: true,
             data: {
                 ...registration,
-                nama_pasien: registration.nama_pasien,
-                pemeriksaan: details.map(d => d.nama_pemeriksaan)
+                pemeriksaan: details.map(d => d.master_pemeriksaan?.nama_pemeriksaan).filter(Boolean)
             }
         });
 

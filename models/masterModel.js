@@ -103,9 +103,26 @@ const MasterModel = {
     },
 
     async delete(id) {
-        return await prisma.master_pemeriksaan.delete({
-            where: { id: Number(id) }
-        });
+        try {
+            // Jalankan dalam transaksi agar aman
+            return await prisma.$transaction(async (tx) => {
+                // 1. Hapus semua parameter anaknya terlebih dahulu (jika ada)
+                await tx.master_pemeriksaan_parameters.deleteMany({
+                    where: { master_pemeriksaan_id: Number(id) }
+                });
+
+                // 2. Baru hapus master pemeriksaannya
+                return await tx.master_pemeriksaan.delete({
+                    where: { id: Number(id) }
+                });
+            });
+        } catch (err) {
+            // Tangkap error P2003 dari Prisma (Data masih dipakai di transaksi)
+            if (err.code === 'P2003') {
+                throw new Error('Data master ini tidak bisa dihapus karena sudah memiliki riwayat transaksi pendaftaran pasien. Hapus data pendaftaran terkait terlebih dahulu atau nonaktifkan layanan ini.');
+            }
+            throw err; // Lempar error lain ke controller
+        }
     },
 
     async getParametersByMasterId(masterId) {

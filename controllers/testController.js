@@ -1,5 +1,6 @@
 // controllers/testController.js
 
+const prisma = require('../config/prisma');
 const TestModel = require('../models/testModel');
 const RegistrationModel = require('../models/registrationModel');
 
@@ -190,8 +191,10 @@ exports.deleteTest = async (req, res) => {
             });
         }
 
-        const db = require('../config/dbConfig');
-        await db.execute('DELETE FROM registration_tests WHERE id = ?', [testId]);
+        // Gunakan prisma delete alih-alih raw query db.execute
+        await prisma.registration_tests.delete({
+            where: { id: Number(testId) }
+        });
 
         res.json({
             success: true,
