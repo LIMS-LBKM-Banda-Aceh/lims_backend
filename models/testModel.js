@@ -57,16 +57,18 @@ const TestModel = {
         const tests = await prisma.registration_tests.findMany({
             where: { registration_id: Number(registrationId) },
             include: {
-                users: { select: { username: true } }
+                users: { select: { username: true } },
+                registrations: { select: { jenis_kelamin: true } } // Ambil Gender Pasien
             },
             orderBy: { id: 'asc' }
         });
 
-        // Map ulang agar mirip hasil JOIN SQL lamamu
         return tests.map(t => ({
             ...t,
             validator_name: t.users?.username || null,
-            users: undefined // buang object users bawaan Prisma
+            jenis_kelamin: t.registrations?.jenis_kelamin || 'L', // Mapping ke root
+            users: undefined,
+            registrations: undefined
         }));
     },
 

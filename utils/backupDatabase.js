@@ -1,10 +1,10 @@
 // utils/backupDatabase.js
 
-const { exec } = require('child_process');
+const util = require('util');
+const exec = util.promisify(require('child_process').exec);
 const path = require('path');
 const fs = require('fs');
 const cron = require('node-cron');
-const { google } = require('googleapis');
 require('dotenv').config();
 
 const BACKUP_DIR = path.join(__dirname, '..', 'backups');
@@ -13,51 +13,9 @@ if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
 }
 
-const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    'https://developers.google.com/oauthplayground'
-);
-
-oauth2Client.setCredentials({
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN
-});
-
-const drive = google.drive({ version: 'v3', auth: oauth2Client });
-
-const uploadToGoogleDrive = async (filePath, fileName) => {
-    try {
-        console.log(`[Google Drive] Memulai upload ${fileName}...`);
-
-        const fileMetadata = {
-            name: fileName,
-            parents: [process.env.DRIVE_FOLDER_ID] // ID Folder tujuan
-        };
-
-        const media = {
-            mimeType: 'application/sql',
-            body: fs.createReadStream(filePath) // Gunakan stream agar hemat RAM
-        };
-
-        const response = await drive.files.create({
-            resource: fileMetadata,
-            media: media,
-            fields: 'id'
-        });
-
-        console.log(`✅ [Google Drive Success] File berhasil diupload dengan ID: ${response.data.id}`);
-
-        // Opsional: Hapus file lokal setelah berhasil upload agar server tidak penuh
-        // fs.unlinkSync(filePath);
-        // console.log(`[Cleanup] File lokal ${fileName} telah dihapus.`);
-
-    } catch (error) {
-        console.error(`❌ [Google Drive Error] Gagal mengupload file:`, error.message);
-    }
-};
-
-const backupDatabase = () => {
+const backupDatabase = async () => {
     const date = new Date();
+    // Format: YYYY-MM-DDTHH-mm-ss
     const dateString = date.toISOString().replace(/:/g, '-').replace(/\..+/, '');
     const fileName = `lims_backup_${dateString}.sql`;
     const filePath = path.join(BACKUP_DIR, fileName);
@@ -67,38 +25,56 @@ const backupDatabase = () => {
     const dbName = process.env.DB_NAME || 'lims_db';
     const dbHost = process.env.DB_HOST || 'localhost';
 
+    // Sesuaikan path mysqldump dengan environment. 
+    // Menggunakan path absolut XAMPP sesuai kode sebelumnya.
     let dumpCommand = `"C:\\xampp\\mysql\\bin\\mysqldump.exe" -h ${dbHost} -u ${dbUser}`;
     if (dbPassword) {
         dumpCommand += ` -p"${dbPassword}"`;
     }
     dumpCommand += ` ${dbName} > "${filePath}"`;
 
-    console.log(`[Backup] Mengekstrak database ke ${fileName}...`);
+    try {
+        console.log(`[Backup] Mengekstrak database ${dbName} ke ${fileName}...`);
 
-    exec(dumpCommand, async (error, stdout, stderr) => {
-        if (error) {
-            console.error(`❌ [Backup Error] Gagal melakukan dump database:`, error.message);
-            return;
-        }
+        // 1. Eksekusi Dump Database
+        await exec(dumpCommand);
         console.log(`✅ [Backup Success] Dump SQL berhasil dibuat secara lokal.`);
 
-        // Panggil fungsi upload ke Drive
-        await uploadToGoogleDrive(filePath, fileName);
-    });
+        // 2. Eksekusi Rclone
+        const rcloneRemote = process.env.RCLONE_REMOTE_NAME || 'gdrive';
+        const rcloneFolder = process.env.RCLONE_DEST_FOLDER || 'Backup_LIMS';
+
+        console.log(`[Rclone] Memulai upload ${fileName} ke Google Drive via Rclone...`);
+
+        // Gunakan 'copy' untuk mempertahankan file lokal. 
+        // Jika ingin otomatis menghapus file lokal setelah upload berhasil, ganti 'copy' menjadi 'move'.
+        const rcloneCommand = `rclone copy "${filePath}" "${rcloneRemote}:${rcloneFolder}"`;
+
+        await exec(rcloneCommand);
+        console.log(`✅ [Rclone Success] File berhasil diamankan ke ${rcloneRemote}:${rcloneFolder}`);
+
+        // 3. Cleanup Lokal (Opsional)
+        // Jika menggunakan 'copy' tapi tetap ingin menghapus file lokal:
+        // fs.unlinkSync(filePath);
+        // console.log(`[Cleanup] File lokal ${fileName} telah dihapus dari server.`);
+
+    } catch (error) {
+        console.error(`❌ [Backup/Rclone Error] Proses gagal:`, error.message);
+    }
 };
 
 module.exports = {
     startAutomatedBackup: () => {
-        // Jalan tiap hari jam 18:00 AM
+        // Berjalan setiap hari jam 18:00 WIB
         cron.schedule('0 18 * * *', () => {
-            console.log('[Backup Cron] Memulai proses backup otomatis ke Google Drive...');
+            console.log('[Backup Cron] Memulai proses auto-backup & rclone sync...');
             backupDatabase();
         }, {
             scheduled: true,
             timezone: "Asia/Jakarta"
         });
 
-        console.log('✅ Auto-Backup ke Google Drive aktif (Berjalan tiap 06:00 PM).');
+        console.log('✅ Auto-Backup Rclone aktif (Berjalan tiap 18:00 WIB).');
     },
     triggerManualBackup: backupDatabase
-}; 
+};

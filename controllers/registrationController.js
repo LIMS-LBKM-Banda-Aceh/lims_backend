@@ -262,8 +262,8 @@ exports.receiveSample = async (req, res) => {
 exports.updateRegistration = async (req, res) => {
     try {
         const { id } = req.params;
-        const data = req.body;
-        const user = req.user; // Diambil dari token oleh authMiddleware
+        let data = req.body; // Ubah const jadi let agar payload bisa dimanipulasi
+        const user = req.user;
 
         // 1. Ambil data asli dari database sebelum diupdate
         const existingData = await RegistrationModel.findById(id);
@@ -275,21 +275,35 @@ exports.updateRegistration = async (req, res) => {
             });
         }
 
-        // 2. LOGIKA PROTEKSI EDIT:
-        // Jika role adalah 'input' tapi status saat ini sudah bukan 'terdaftar', TOLAK UPDATE.
-        if (user.role === 'input' && existingData.status !== 'terdaftar') {
-            return res.status(403).json({
-                success: false,
-                message: 'Akses ditolak. Petugas input hanya dapat mengubah data dengan status Terdaftar.'
-            });
+        // 2. LOGIKA PROTEKSI ALUR (BEST PRACTICE)
+        if (existingData.status !== 'terdaftar') {
+            // Blokir total untuk role input
+            if (user.role === 'input') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Akses ditolak. Data sudah diproses/masuk antrian, tidak dapat diedit oleh petugas pendaftaran.'
+                });
+            }
+
+            // Untuk Admin/Role lain: MEREKA BOLEH EDIT TYPO NAMA/ALAMAT, 
+            // TAPI DILARANG KERAS MENGUBAH ITEM PEMERIKSAAN.
+            // Kita hapus properti items dari payload agar model tidak mereset data test lab.
+            if (data.items || data.pemeriksaan_ids) {
+                delete data.items;
+                delete data.pemeriksaan_ids;
+                delete data.total_biaya; // Biaya dikunci agar tidak berubah di tengah jalan
+                delete data.status_pembayaran;
+            }
         }
 
-        // 3. Jika lolos validasi, lakukan update
+        // 3. Lakukan update
         const registration = await RegistrationModel.update(id, data);
 
         res.json({
             success: true,
-            message: 'Registration updated successfully',
+            message: existingData.status !== 'terdaftar'
+                ? 'Identitas berhasil diupdate. (Item pemeriksaan dikunci karena status sudah berjalan)'
+                : 'Registration updated successfully',
             data: registration
         });
     } catch (err) {

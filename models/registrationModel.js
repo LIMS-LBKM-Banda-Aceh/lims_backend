@@ -395,7 +395,28 @@ const RegistrationModel = {
 
                 for (const [key, value] of Object.entries(fieldData)) {
                     if (ALLOWED_FIELDS.includes(key)) {
-                        updatePayload[key] = dateFields.includes(key) && value ? parseDate(value) : value;
+                        if (dateFields.includes(key) && value) {
+                            // Parse standard date fields
+                            updatePayload[key] = parseDate(value);
+
+                        } else if (key === 'waktu_daftar' && value) {
+                            // FIX: Handle waktu_daftar specific formatting to satisfy Prisma DateTime
+                            // Combine with tgl_daftar if available, otherwise fallback to today
+                            const baseDate = fieldData.tgl_daftar
+                                ? moment(fieldData.tgl_daftar).format('YYYY-MM-DD')
+                                : moment().format('YYYY-MM-DD');
+
+                            // value from <input type="time"> is usually "HH:mm". Append seconds.
+                            const timeStr = value.length === 5 ? `${value}:00` : value;
+                            const mTime = moment(`${baseDate}T${timeStr}`);
+
+                            updatePayload[key] = mTime.isValid() ? mTime.toDate() : null;
+
+                        } else if (key === 'umur') {
+                            updatePayload[key] = (value !== null && value !== '') ? Number(value) : null;
+                        } else {
+                            updatePayload[key] = value;
+                        }
                     }
                 }
 
