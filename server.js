@@ -16,7 +16,6 @@ const masterRoutes = require('./routes/masterRoutes');
 const publicRoutes = require('./routes/publicRoutes');
 const settingRoutes = require('./routes/settingRoutes');
 const { startAutomatedBackup } = require('./utils/backupDatabase');
-
 const { triggerManualBackup } = require('./utils/backupDatabase');
 
 const app = express();
