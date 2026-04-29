@@ -592,3 +592,70 @@ exports.getAllTimeStats = async (req, res) => {
         });
     }
 };
+
+exports.uploadCustomLHU = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'File dokumen LHU tidak ditemukan' });
+        }
+
+        // 1. Cek apakah ada file custom LHU lama. Jika ada, hapus dari server agar storage tidak penuh
+        const existingData = await RegistrationModel.findById(id);
+        if (existingData && existingData.link_hasil && existingData.link_hasil.includes('custom_lhu_')) {
+            const oldFilename = existingData.link_hasil.split('/').pop();
+            const oldFilePath = path.join(PUBLIC_RESULTS_DIR, oldFilename);
+            if (fs.existsSync(oldFilePath)) {
+                fs.unlinkSync(oldFilePath);
+            }
+        }
+
+        const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+        const link = `${baseUrl}/public/results/${req.file.filename}`;
+
+        // Menggunakan fungsi yang sudah ada di model untuk update link
+        await RegistrationModel.setLinkResult(id, link);
+
+        res.json({
+            success: true,
+            message: 'Dokumen LHU Custom berhasil diunggah',
+            data: { link_hasil: link }
+        });
+    } catch (err) {
+        console.error('Upload Custom LHU Error:', err);
+        res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat unggah dokumen' });
+    }
+};
+
+exports.deleteCustomLHU = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const existingData = await RegistrationModel.findById(id);
+
+        if (!existingData || !existingData.link_hasil) {
+            return res.status(404).json({ success: false, message: 'Dokumen LHU tidak ditemukan' });
+        }
+
+        // Pastikan hanya bisa menghapus custom LHU (bukan yang auto-generate)
+        if (existingData.link_hasil.includes('custom_lhu_')) {
+            const filename = existingData.link_hasil.split('/').pop();
+            const filePath = path.join(PUBLIC_RESULTS_DIR, filename);
+
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+        }
+
+        // Set link hasil kembali menjadi null (kembali ke state awal/auto-generate)
+        await RegistrationModel.setLinkResult(id, null);
+
+        res.json({
+            success: true,
+            message: 'Custom LHU berhasil dihapus. Sistem kembali menggunakan LHU otomatis.'
+        });
+    } catch (err) {
+        console.error('Delete Custom LHU Error:', err);
+        res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat menghapus dokumen' });
+    }
+};
