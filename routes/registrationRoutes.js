@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/registrationController');
 const { authenticate, authorize } = require('../middleware/authMiddleware');
+const upload = require('../middleware/uploadMiddleware');
 
 // KHUSUS LAB (Data Anonim)
 router.get('/lab-queue', authenticate, authorize(['lab', 'admin']), controller.getLabQueue);
@@ -44,5 +45,11 @@ router.put('/:id/finalize', authenticate, authorize(['validator', 'admin']), con
 
 // Publish Results
 router.put('/:id/publish', authenticate, authorize(['manajemen', 'admin']), controller.publishResults);
+
+// Upload Custom LHU (Hasil Lab Uji)
+router.post('/:id/upload-lhu', authenticate, authorize(['manajemen', 'admin']), upload.single('file'), controller.uploadCustomLHU);
+
+// Hapus Custom LHU
+router.delete('/:id/custom-lhu', authenticate, authorize(['manajemen', 'admin']), controller.deleteCustomLHU);
 
 module.exports = router;
