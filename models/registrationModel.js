@@ -197,6 +197,8 @@ const RegistrationModel = {
             // Insert Pendaftaran Utama
             const reg = await tx.registrations.create({
                 data: {
+                    dokter: data.dokter || null,
+                    no_rekam_medik: data.no_rekam_medik || null,
                     nama_pasien: data.nama_pasien,
                     tgl_lahir: parseDate(data.tgl_lahir),
                     umur: data.umur || null,
@@ -385,8 +387,8 @@ const RegistrationModel = {
 
                 // Update fields utama
                 const ALLOWED_FIELDS = [
-                    'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin', 'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
-                    'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'ket_pengerjaan', 'no_sampel_lab', 'petugas_input', 'no_invoice',
+                    'dokter','no_rekam_medik', 'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin', 'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
+                    'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'waktu_pengambilan', 'ket_pengerjaan', 'no_sampel_lab', 'petugas_input', 'no_invoice',
                     'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya', 'status', 'link_hasil', 'status_pembayaran', 'last_sample_seq'
                 ];
 
@@ -488,10 +490,9 @@ const RegistrationModel = {
         const updateData = { status: status, updated_at: new Date() };
 
         if (status === 'proses_sampling') {
-            updateData.waktu_daftar = new Date();
             updateData.tgl_pengambilan = new Date();
+            updateData.waktu_pengambilan = new Date();
         } else if (status === 'diterima_lab') {
-            updateData.tgl_daftar = new Date();
         } else if (status === 'proses_lab') {
             updateData.waktu_mulai_periksa = new Date();
         } else if (status === 'selesai_uji') {
@@ -506,7 +507,9 @@ const RegistrationModel = {
 
     async setStatusAndValidator(id, status, validator) {
         const updateData = { status, validator, updated_at: new Date() };
-        if (status === 'selesai') updateData.validated_at = new Date();
+        if (status === 'selesai') {
+            updateData.validated_at = new Date();
+        }
 
         return await prisma.registrations.update({
             where: { id: Number(id) },
