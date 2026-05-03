@@ -121,6 +121,9 @@ model registrations {
   link_hasil            String?                          @db.VarChar(255)
   registration_details  registration_details[]
   registration_tests    registration_tests[]
+  dokter                String?                          @db.VarChar(150)
+  no_rekam_medik        String?                          @db.VarChar(50)
+  waktu_pengambilan     DateTime?
 }
 
 model system_settings {
