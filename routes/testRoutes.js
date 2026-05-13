@@ -18,6 +18,9 @@ router.put('/tests/:testId/validate', authenticate, authorize(['validator', 'adm
 // Create test (jarang digunakan, biasanya auto create dari registration)
 router.post('/registrations/:registrationId/tests', authenticate, authorize(['lab', 'admin']), testController.createTest);
 
+router.put('/tests/:testId', authenticate, authorize(['validator', 'lab', 'admin']), testController.updateTest);
+router.put('/tests/:testId/result', authenticate, authorize(['validator', 'lab', 'admin']), testController.updateTestResult);
+
 // Delete test
 router.delete('/tests/:testId', authenticate, authorize(['lab', 'admin']), testController.deleteTest);
 

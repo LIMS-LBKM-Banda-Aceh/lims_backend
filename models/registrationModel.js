@@ -49,6 +49,28 @@ const RegistrationModel = {
         }
     },
 
+    async getNextRekamMedik() {
+        // Murni mencari angka untuk di-increment. Abaikan jika RM berisi huruf.
+        const result = await prisma.$queryRaw`
+            SELECT no_rekam_medik 
+            FROM registrations 
+            WHERE no_rekam_medik REGEXP '^[0-9]+$' 
+            ORDER BY CAST(no_rekam_medik AS UNSIGNED) DESC 
+            LIMIT 1
+        `;
+
+        if (result.length > 0 && result[0].no_rekam_medik) {
+            const lastRmStr = result[0].no_rekam_medik;
+            const nextRmNum = parseInt(lastRmStr, 10) + 1;
+            // Pad start dengan '0' minimal 4 digit
+            return {
+                last_rm: lastRmStr,
+                next_rm: nextRmNum.toString().padStart(Math.max(lastRmStr.length, 4), '0')
+            };
+        }
+        return { last_rm: "-", next_rm: "0001" };
+    },
+
     async findById(id) {
         const registration = await prisma.registrations.findUnique({
             where: { id: Number(id) },
@@ -120,7 +142,8 @@ const RegistrationModel = {
             status: { notIn: ['terdaftar', 'proses_sampling'] }
         };
 
-        if (userRole === 'lab') {
+        // FIX: Terapkan filter instalasi untuk lab
+        if (['lab'].includes(userRole)) {
             whereClause.registration_details = {
                 some: { master_pemeriksaan: { instalasi_id: Number(instalasiId) || 0 } }
             };
@@ -134,10 +157,25 @@ const RegistrationModel = {
         return rows.map(r => ({ ...r, total_biaya: Number(r.total_biaya) }));
     },
 
+    async setPemeriksa(id, pemeriksaName) {
+        return await prisma.registrations.update({
+            where: { id: Number(id) },
+            data: { pemeriksa: pemeriksaName, updated_at: new Date() }
+        });
+    },
+
     async findLastPatientByNik(nik) {
         return await prisma.registrations.findFirst({
             where: { nik },
-            select: { nama_pasien: true, tgl_lahir: true, jenis_kelamin: true, alamat: true, no_kontak: true },
+            select: { nama_pasien: true, tgl_lahir: true, jenis_kelamin: true, alamat: true, no_kontak: true, no_rekam_medik: true },
+            orderBy: { created_at: 'desc' }
+        });
+    },
+
+    async findLastPatientByRm(no_rekam_medik) {
+        return await prisma.registrations.findFirst({
+            where: { no_rekam_medik },
+            select: { nama_pasien: true, tgl_lahir: true, jenis_kelamin: true, alamat: true, no_kontak: true, nik: true },
             orderBy: { created_at: 'desc' }
         });
     },
@@ -198,6 +236,7 @@ const RegistrationModel = {
             const reg = await tx.registrations.create({
                 data: {
                     dokter: data.dokter || null,
+                    alamat_dokter: data.alamat_dokter || null,
                     no_rekam_medik: data.no_rekam_medik || null,
                     nama_pasien: data.nama_pasien,
                     tgl_lahir: parseDate(data.tgl_lahir),
@@ -387,9 +426,10 @@ const RegistrationModel = {
 
                 // Update fields utama
                 const ALLOWED_FIELDS = [
-                    'dokter','no_rekam_medik', 'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin', 'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
+                    'dokter', 'alamat_dokter', 'no_rekam_medik', 'nama_pasien', 'tgl_lahir', 'umur', 'jenis_kelamin', 'nik', 'alamat', 'no_kontak', 'asal_sampel', 'pengirim_instansi',
                     'tgl_daftar', 'waktu_daftar', 'tgl_pengambilan', 'waktu_pengambilan', 'ket_pengerjaan', 'no_sampel_lab', 'petugas_input', 'no_invoice',
-                    'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya', 'status', 'link_hasil', 'status_pembayaran', 'last_sample_seq'
+                    'kode_ins', 'jenis_pemeriksaan', 'catatan_tambahan', 'total_biaya', 'status', 'link_hasil', 'pemeriksa',
+                    'status_pembayaran', 'last_sample_seq', 'jenis_spesimen'
                 ];
 
                 const updatePayload = {};
@@ -521,6 +561,18 @@ const RegistrationModel = {
         return await prisma.registrations.update({
             where: { id: Number(id) },
             data: { link_hasil: link, status: 'selesai', updated_at: new Date() }
+        });
+    },
+
+    async setVerified(id, verifikatorName) {
+        return await prisma.registrations.update({
+            where: { id: Number(id) },
+            data: {
+                status: 'selesai_uji',
+                verifikator: verifikatorName,
+                verified_at: new Date(),
+                updated_at: new Date()
+            }
         });
     },
 

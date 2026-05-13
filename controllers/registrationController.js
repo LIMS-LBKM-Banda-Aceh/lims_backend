@@ -491,32 +491,59 @@ exports.getRegistrationStats = async (req, res) => {
             SUM(CASE WHEN status = 'proses_sampling' THEN 1 ELSE 0 END) as in_sampling,
             SUM(CASE WHEN status = 'diterima_lab' THEN 1 ELSE 0 END) as diterima_lab,
             SUM(CASE WHEN status = 'proses_lab' THEN 1 ELSE 0 END) as in_testing,
+            SUM(CASE WHEN status = 'menunggu_verifikasi' THEN 1 ELSE 0 END) as waiting_verification,
             SUM(CASE WHEN status = 'selesai_uji' THEN 1 ELSE 0 END) as waiting_validation,
             SUM(CASE WHEN status = 'selesai' THEN 1 ELSE 0 END) as completed
           FROM registrations
         `;
 
-        // Eksekusi pakai Prisma
         const result = await prisma.$queryRawUnsafe(sql);
         const data = result[0];
 
         res.json({
             success: true,
             data: result.length > 0 ? {
-                // WAJIB di-parsing pakai Number() karena Prisma return BigInt
                 total: Number(data.total || 0),
                 waiting_queue: Number(data.waiting_queue || 0),
                 in_sampling: Number(data.in_sampling || 0),
                 diterima_lab: Number(data.diterima_lab || 0),
                 in_testing: Number(data.in_testing || 0),
+                waiting_verification: Number(data.waiting_verification || 0),
                 waiting_validation: Number(data.waiting_validation || 0),
                 completed: Number(data.completed || 0)
             } : {}
         });
     } catch (err) {
-        console.error('Error getting stats:', err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
+};
+exports.verifyRegistration = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user = req.user;
+
+        const registration = await RegistrationModel.findById(id);
+        if (!registration) {
+            return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
+        }
+
+        // REFACTORING: Izinkan Lab memverifikasi (sesuai case role merangkap)
+        if (!['lab', 'admin'].includes(user.role)) {
+            return res.status(403).json({ success: false, message: 'Akses ditolak untuk melakukan verifikasi' });
+        }
+        // Teks fullname otomatis masuk ke field `verifikator` untuk tampil di LHU
+        await RegistrationModel.setVerified(id, user.fullname);
+
+        res.json({
+            success: true,
+            message: 'Data berhasil diverifikasi dan diteruskan ke Dokter / Validator',
+            data: { verifikator: user.fullname }
+        });
+    } catch (err) {
+        console.error('Error verifying registration:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+
 };
 
 exports.finalizeRegistration = async (req, res) => {
@@ -524,29 +551,26 @@ exports.finalizeRegistration = async (req, res) => {
         const { id } = req.params;
         const user = req.user;
 
-        // Cek keberadaan data
         const registration = await RegistrationModel.findById(id);
         if (!registration) {
             return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
         }
 
-        // VERIFIKASI: Pastikan user yang melakukan ACC adalah validator (role validator atau admin)
-        if (!['validator', 'admin'].includes(user.role)) {
-            return res.status(403).json({
+        if (registration.status !== 'selesai_uji' && user.role !== 'admin') {
+            return res.status(400).json({
                 success: false,
-                message: 'Hanya validator atau admin yang dapat melakukan ACC'
+                message: 'Data belum diverifikasi oleh Analis / Verifikator.'
             });
+        }
+        if (!['validator', 'admin'].includes(user.role)) {
+            return res.status(403).json({ success: false, message: 'Hanya validator atau admin yang dapat melakukan ACC final' });
         }
 
         const validatorName = user.fullname;
         await RegistrationModel.setStatusAndValidator(id, 'selesai', validatorName);
-
         res.json({
             success: true,
-            message: 'Registrasi telah diselesaikan dan siap cetak LHU',
-            data: {
-                validator: validatorName
-            }
+            message: 'Registrasi telah diselesaikan dan siap cetak LHU'
         });
     } catch (err) {
         console.error('Error finalizing registration:', err);
@@ -593,6 +617,57 @@ exports.getAllTimeStats = async (req, res) => {
     }
 };
 
+exports.getNextRm = async (req, res) => {
+    try {
+        const data = await RegistrationModel.getNextRekamMedik();
+        res.json({ success: true, data });
+    } catch (err) {
+        console.error("Gagal mendapatkan RM:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+exports.checkPatientByRm = async (req, res) => {
+    try {
+        const { rm } = req.params;
+        if (!rm) {
+            return res.status(400).json({ success: false, message: 'RM tidak valid' });
+        }
+
+        const patient = await RegistrationModel.findLastPatientByRm(rm);
+
+        if (patient) {
+            return res.json({
+                success: true, found: true, data: patient, message: 'Data pasien lama ditemukan berdasarkan RM'
+            });
+        } else {
+            return res.json({
+                success: true, found: false, message: 'RM belum terdaftar (Pasien Baru)'
+            });
+        }
+    } catch (err) {
+        console.error('Error checking RM:', err);
+        res.status(500).json({ success: false, message: 'Server error saat pengecekan RM' });
+    }
+};
+
+exports.updateSpesimen = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { jenis_spesimen } = req.body;
+        
+        await RegistrationModel.update(id, { jenis_spesimen });
+        
+        res.json({
+            success: true,
+            message: 'Jenis spesimen berhasil disimpan'
+        });
+    } catch (err) {
+        console.error('Error updating spesimen:', err);
+        res.status(500).json({ success: false, message: 'Server error gagal menyimpan spesimen' });
+    }
+};
+
 exports.uploadCustomLHU = async (req, res) => {
     try {
         const { id } = req.params;
@@ -627,6 +702,8 @@ exports.uploadCustomLHU = async (req, res) => {
         res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat unggah dokumen' });
     }
 };
+
+
 
 exports.deleteCustomLHU = async (req, res) => {
     try {

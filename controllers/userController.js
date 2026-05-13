@@ -24,12 +24,12 @@ exports.register = async (req, res) => {
             });
         }
 
-        const user = await UserModel.createUser({ 
-            username, 
-            password, 
-            fullname, 
-            role, 
-            instalasi_id: (role === 'lab' && instalasi_id !== "") ? instalasi_id : null 
+        const user = await UserModel.createUser({
+            username,
+            password,
+            fullname,
+            role,
+            instalasi_id: (['lab'].includes(role) && instalasi_id !== "") ? instalasi_id : null
         });
 
         res.status(201).json({
@@ -156,9 +156,19 @@ exports.updateUser = async (req, res) => {
     try {
         const { id } = req.params;
         const data = req.body;
-
+        // Ambil data user saat ini untuk cek role bawaan jika tidak ada di req.body
+        const currentUser = await UserModel.findById(id);
+        if (!currentUser) {
+            return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
+        }
+        // FIX: Pastikan yang bukan lab di-set null instalasinya
+        const roleToCheck = data.role || currentUser.role;
+        if (!['lab'].includes(roleToCheck)) {
+            data.instalasi_id = null;
+        } else if (data.instalasi_id) {
+            data.instalasi_id = Number(data.instalasi_id);
+        }
         const user = await UserModel.updateUser(id, data);
-
         res.json({
             success: true,
             message: 'User updated successfully',
@@ -166,10 +176,7 @@ exports.updateUser = async (req, res) => {
         });
     } catch (err) {
         console.error('Error updating user:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Server error'
-        });
+        res.status(500).json({ success: false, message: 'Server error' });
     }
 };
 

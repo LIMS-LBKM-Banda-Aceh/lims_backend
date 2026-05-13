@@ -213,23 +213,18 @@ exports.updateTestResult = async (req, res) => {
     try {
         const { testId } = req.params;
         const { nilai } = req.body;
-        const user = req.user; // Dapatkan user dari token JWT
+        const user = req.user;
 
-        // 1. Ambil data tes saat ini
         const currentTest = await TestModel.findById(testId);
         if (!currentTest) {
             return res.status(404).json({ success: false, message: 'Data tes tidak ditemukan' });
         }
 
-        // 2. BEST PRACTICE ISOLASI LAB: 
-        // Cegah petugas lab menginput hasil pemeriksaan milik instalasi lain
         if (user.role === 'lab' && user.instalasi_id) {
-            // Cari tahu instalasi_id dari pemeriksaan ini dengan mencocokkan namanya ke master
             const master = await prisma.master_pemeriksaan.findFirst({
                 where: { nama_pemeriksaan: currentTest.pemeriksaan_name }
             });
 
-            // Jika pemeriksaan ini punya instalasi_id dan TIDAK SAMA dengan milik petugas lab, BLOKIR!
             if (master && master.instalasi_id !== null && master.instalasi_id !== user.instalasi_id) {
                 return res.status(403).json({
                     success: false,
@@ -238,19 +233,19 @@ exports.updateTestResult = async (req, res) => {
             }
         }
 
-        // 3. Update nilai tes individual
         await TestModel.updateTest(testId, {
             nilai,
             status: 'completed'
         });
 
-        // 4. Cek apakah SEMUA tes untuk registrasi ini sudah completed
         const regId = currentTest.registration_id;
+        await RegistrationModel.setPemeriksa(regId, user.fullname);
         const allTests = await TestModel.getTestsByRegistrationId(regId);
         const isAllFinished = allTests.every(t => t.status === 'completed' && t.nilai !== null);
 
+        // REFACTORING: Jika sudah diinput semua, masuk antrian Verifikasi Lab
         if (isAllFinished) {
-            await RegistrationModel.setStatus(regId, 'selesai_uji');
+            await RegistrationModel.setStatus(regId, 'menunggu_verifikasi');
         }
 
         res.json({

@@ -104,13 +104,17 @@ model registrations {
   petugas_input         String?                          @db.VarChar(50)
   kode_ins              String?                          @db.VarChar(50)
   jenis_pemeriksaan     String?                          @db.Text
+  jenis_spesimen        String?                          @db.VarChar(100)
   created_at            DateTime                         @default(now()) @db.Timestamp(0)
   updated_at            DateTime                         @default(now()) @db.Timestamp(0)
   no_reg                String?                          @db.VarChar(50)
   no_invoice            String?                          @db.VarChar(100)
   status                String?                          @db.VarChar(50)
+  pemeriksa             String?                          @db.VarChar(100)
   validator             String?                          @db.VarChar(100)
   validated_at          DateTime?                        @db.Timestamp(0)
+  verifikator           String?                          @db.VarChar(100) 
+  verified_at           DateTime?                        @db.Timestamp(0)
   ket_pengerjaan        String?                          @db.Text
   waktu_mulai_periksa   DateTime?                        @db.DateTime(0)
   waktu_selesai_periksa DateTime?                        @db.DateTime(0)
@@ -122,6 +126,7 @@ model registrations {
   registration_details  registration_details[]
   registration_tests    registration_tests[]
   dokter                String?                          @db.VarChar(150)
+  alamat_dokter         String?                          @db.Text
   no_rekam_medik        String?                          @db.VarChar(50)
   waktu_pengambilan     DateTime?
 }
